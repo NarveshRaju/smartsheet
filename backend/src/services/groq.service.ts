@@ -103,10 +103,14 @@ export async function curateEventWithGroq(
     const systemPrompt = `You are an expert AI assistant that curates structured Google Calendar events from tabular project data (Smartsheet).
 Analyze the provided row data, column mappings, and timezone to output a structured JSON Google Calendar event object.
 
-Requirements:
+CRITICAL RULE:
+If the row does NOT contain a valid time (i.e. start time and end time are blank/missing, or only date-only is provided without time), you MUST output:
+{ "skip": true }
+
+Requirements when time is present:
 1. "summary": Concise, clear, and professional event title.
-2. "start": An object with either "dateTime" (ISO 8601 string, e.g. "2026-08-18T10:00:00") or "date" ("YYYY-MM-DD" for all-day events), and "timeZone": "${timezone}".
-3. "end": An object with either "dateTime" (ISO 8601 string) or "date" ("YYYY-MM-DD"), and "timeZone": "${timezone}". Default duration is 1 hour if start time is provided but no end time is specified.
+2. "start": An object with "dateTime" (ISO 8601 string with time e.g. "2026-08-18T10:00:00") and "timeZone": "${timezone}".
+3. "end": An object with "dateTime" (ISO 8601 string with time e.g. "2026-08-18T11:00:00") and "timeZone": "${timezone}". Default duration is 1 hour if start time is provided but no end time is specified.
 4. "description": Clean, nicely formatted multi-line summary of key notes, row context, links, and details from the row.
 5. "location": Physical location, conference room, or video meeting link (Zoom/Google Meet/Teams) if present in the row.
 6. "attendees": Array of valid email objects e.g. [{"email": "user@example.com"}].
@@ -114,10 +118,11 @@ Requirements:
 
 Respond strictly with valid JSON conforming to this schema:
 {
-  "summary": string,
-  "start": { "dateTime": string, "timeZone": string } OR { "date": string, "timeZone": string },
-  "end": { "dateTime": string, "timeZone": string } OR { "date": string, "timeZone": string },
-  "description": string,
+  "skip"?: boolean,
+  "summary"?: string,
+  "start"?: { "dateTime": string, "timeZone": string },
+  "end"?: { "dateTime": string, "timeZone": string },
+  "description"?: string,
   "location"?: string,
   "attendees"?: [{"email": string}],
   "status"?: "confirmed" | "tentative" | "cancelled"
@@ -150,8 +155,8 @@ Respond strictly with valid JSON conforming to this schema:
 
     const parsed = JSON.parse(content);
 
-    if (!parsed.summary || !parsed.start || !parsed.end) {
-      logger.warn(`Groq JSON missing required event fields for row ${row.id}`);
+    if (parsed.skip || !parsed.start?.dateTime || !parsed.end?.dateTime || !parsed.summary) {
+      logger.debug(`Row ${row.id}: Groq determined start/end time is blank or row should be skipped`);
       return null;
     }
 

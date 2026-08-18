@@ -127,6 +127,12 @@ function mapRowToEventStandard(
     return null;
   }
 
+  // If start time and end time are blank (no time specified), do NOT update onto calendars
+  if (!startParsed.hasTime) {
+    logger.debug(`Row ${row.id}: Start time and end time are blank, skipping calendar sync`);
+    return null;
+  }
+
   let endParsed = parseSmartsheetDateTime(endDateStr || startDateStr, endTimeStr, 10, 0);
   if (!endParsed || (!endDateStr && !endTimeStr && startParsed.hasTime)) {
     if (startParsed.hasTime && startParsed.dateTime) {
@@ -147,12 +153,8 @@ function mapRowToEventStandard(
 
   const event: CalendarEventData = {
     summary: title,
-    start: startParsed.hasTime && startParsed.dateTime
-      ? { dateTime: startParsed.dateTime, timeZone: timezone }
-      : { date: startParsed.dateOnly, timeZone: timezone },
-    end: (startParsed.hasTime || endParsed.hasTime) && endParsed.dateTime
-      ? { dateTime: endParsed.dateTime, timeZone: timezone }
-      : { date: endParsed.dateOnly, timeZone: timezone },
+    start: { dateTime: startParsed.dateTime!, timeZone: timezone },
+    end: { dateTime: endParsed.dateTime || startParsed.dateTime!, timeZone: timezone },
   };
 
   const description = getCellValue(columnMapping.description);
@@ -254,7 +256,29 @@ export async function fullSync(configId: string): Promise<SyncResult> {
 
       try {
         const eventData = await mapRowToEvent(row, columnMapping, timezone);
-        if (!eventData) continue; // Skip rows without required fields
+        if (!eventData) {
+          // If start/end time is blank or missing, and this row was previously on Google Calendar, remove it
+          if (existingRecord && existingRecord.googleEventId && existingRecord.syncStatus !== 'deleted') {
+            try {
+              await googleService.deleteEvent(userId, config.googleCalendarId, existingRecord.googleEventId);
+              await prisma.syncRecord.update({
+                where: { id: existingRecord.id },
+                data: {
+                  syncStatus: 'deleted',
+                  syncAction: 'delete',
+                  lastSyncedAt: new Date(),
+                  lastError: null,
+                  rowData: row,
+                },
+              });
+              result.deleted++;
+              logger.info(`Removed row ${rowId} from Google Calendar (time is blank)`);
+            } catch (delErr: any) {
+              logger.warn(`Could not remove event for row ${rowId}: ${delErr.message}`);
+            }
+          }
+          continue; // Skip rows without time
+        }
 
         if (!existingRecord) {
           // CREATE: New row, create calendar event
@@ -456,7 +480,19 @@ export async function syncRow(
 
     const eventData = await mapRowToEvent(row, columnMapping, timezone);
     if (!eventData) {
-      logger.debug(`Row ${rowId}: Missing required fields, skipping`);
+      logger.debug(`Row ${rowId}: Start/end time is blank or missing required fields, skipping`);
+      if (existingRecord?.googleEventId && existingRecord.syncStatus !== 'deleted') {
+        try {
+          await googleService.deleteEvent(userId, config.googleCalendarId, existingRecord.googleEventId);
+          await prisma.syncRecord.update({
+            where: { id: existingRecord.id },
+            data: { syncStatus: 'deleted', syncAction: 'delete', lastSyncedAt: new Date(), lastError: null, rowData: row },
+          });
+          logger.info(`Removed row ${rowId} from Google Calendar (time is blank)`);
+        } catch (delErr: any) {
+          logger.warn(`Could not remove event for row ${rowId}: ${delErr.message}`);
+        }
+      }
       return;
     }
 
