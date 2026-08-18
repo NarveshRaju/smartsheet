@@ -141,6 +141,43 @@ router.put('/config', async (req: Request, res: Response, next: NextFunction) =>
   }
 });
 
+// ── Reset / Delete Sync Config ────────────────────────────
+
+router.delete('/config', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.session.userId!;
+    const config = await prisma.syncConfiguration.findFirst({ where: { userId } });
+    if (!config) {
+      res.status(404).json({ error: 'No sync configuration found to reset.' });
+      return;
+    }
+
+    // Clean up webhook if registered
+    if (config.webhookId) {
+      try {
+        await webhookService.deleteWebhook(userId, config.webhookId);
+      } catch (e: any) {
+        logger.warn(`Failed to delete webhook during sync reset: ${e.message}`);
+      }
+    }
+
+    // Delete sync records first
+    await prisma.syncRecord.deleteMany({
+      where: { syncConfigId: config.id },
+    });
+
+    // Delete sync configuration
+    await prisma.syncConfiguration.delete({
+      where: { id: config.id },
+    });
+
+    logger.info(`User ${userId} reset sync configuration`);
+    res.json({ success: true, message: 'Sync configuration reset successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ── Full Sync ─────────────────────────────────────────────
 
 router.post('/full', syncLimiter, async (req: Request, res: Response, next: NextFunction) => {

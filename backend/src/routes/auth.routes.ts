@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import * as googleService from '../services/google.service.js';
 import * as smartsheetService from '../services/smartsheet.service.js';
+import * as webhookService from '../services/webhook.service.js';
 import { encrypt } from '../services/crypto.service.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
@@ -182,6 +183,50 @@ router.get('/status', async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error(`Auth status error: ${error.message}`);
     res.status(500).json({ error: 'Failed to get auth status' });
+  }
+});
+
+// ── Disconnect Provider ───────────────────────────────────
+
+router.post('/disconnect/:provider', async (req: Request, res: Response) => {
+  try {
+    const userId = req.session?.userId;
+    const { provider } = req.params;
+
+    if (!userId) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    if (provider !== 'google' && provider !== 'smartsheet') {
+      res.status(400).json({ error: 'Invalid provider' });
+      return;
+    }
+
+    if (provider === 'smartsheet') {
+      const config = await prisma.syncConfiguration.findFirst({ where: { userId } });
+      if (config?.webhookId) {
+        try {
+          await webhookService.deleteWebhook(userId, config.webhookId);
+          await prisma.syncConfiguration.update({
+            where: { id: config.id },
+            data: { webhookId: null, isEnabled: false },
+          });
+        } catch (e: any) {
+          logger.warn(`Failed to clean up webhook on disconnect: ${e.message}`);
+        }
+      }
+    }
+
+    await prisma.oAuthAccount.deleteMany({
+      where: { userId, provider },
+    });
+
+    logger.info(`User ${userId} disconnected provider ${provider}`);
+    res.json({ success: true, provider });
+  } catch (error: any) {
+    logger.error(`Disconnect error: ${error.message}`);
+    res.status(500).json({ error: 'Failed to disconnect account' });
   }
 });
 

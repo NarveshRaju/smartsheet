@@ -399,6 +399,28 @@ body {
   box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
 }
 
+.btn-danger {
+  background: linear-gradient(135deg, var(--accent-rose), #e11d48);
+  color: white;
+  box-shadow: 0 2px 8px rgba(244, 63, 94, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(244, 63, 94, 0.4);
+}
+
+.btn-outline-danger {
+  background: transparent;
+  color: var(--accent-rose);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.btn-outline-danger:hover:not(:disabled) {
+  background: var(--accent-rose-glow);
+  border-color: var(--accent-rose);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);
@@ -411,6 +433,7 @@ body {
   border-color: var(--border-default);
 }
 
+.btn-xs { padding: 0.2rem 0.55rem; font-size: 0.7rem; border-radius: 4px; }
 .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.75rem; }
 .btn-lg { padding: 0.75rem 2rem; font-size: 0.95rem; }
 

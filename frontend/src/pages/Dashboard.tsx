@@ -62,6 +62,29 @@ export default function Dashboard() {
     finally { setSaving(false); }
   };
 
+  const handleResetSync = async () => {
+    if (!confirm('Are you sure you want to unsync and reset your configuration? This will remove existing sync mappings and allow you to configure a fresh sync between a new sheet and calendar.')) {
+      return;
+    }
+    setSaving(true); setSaveMsg(null);
+    try {
+      await api.resetSyncConfig();
+      setSyncConfig(null);
+      setSelectedSheetId('');
+      setSelectedSheetName('');
+      setSelectedCalendarId('');
+      setSelectedCalendarName('');
+      setColumnMapping({});
+      setSyncStatus(null);
+      setSaveMsg('Sync configuration reset successfully. You can now configure a new sync!');
+      setTimeout(() => setSaveMsg(null), 4000);
+    } catch (err: any) {
+      setSaveMsg('Error resetting sync: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleToggle = async (enabled: boolean) => {
     try { const { config } = await api.updateSyncConfig({ isEnabled: enabled }); setSyncConfig(config); }
     catch (err: any) { console.error('Toggle failed:', err); }
@@ -83,16 +106,42 @@ export default function Dashboard() {
       <section className="dashboard-section">
         <h2 className="section-title"><span className="section-number">1</span>Connect Your Accounts</h2>
         <div className="connections-grid">
-          <ConnectionCard provider="google" connected={authStatus?.google || false} label="Google Calendar"
-            description="Connect to create and manage calendar events" expiry={authStatus?.googleExpiry} />
-          <ConnectionCard provider="smartsheet" connected={authStatus?.smartsheet || false} label="Smartsheet"
-            description="Connect to read sheets and receive webhooks" expiry={authStatus?.smartsheetExpiry} />
+          <ConnectionCard
+            provider="google"
+            connected={authStatus?.google || false}
+            label="Google Calendar"
+            description="Connect to create and manage calendar events"
+            expiry={authStatus?.googleExpiry}
+            onDisconnected={loadData}
+          />
+          <ConnectionCard
+            provider="smartsheet"
+            connected={authStatus?.smartsheet || false}
+            label="Smartsheet"
+            description="Connect to read sheets and receive webhooks"
+            expiry={authStatus?.smartsheetExpiry}
+            onDisconnected={loadData}
+          />
         </div>
       </section>
 
       {both && (
         <section className="dashboard-section">
-          <h2 className="section-title"><span className="section-number">2</span>Configure Sync</h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+            <h2 className="section-title" style={{ marginBottom: 0 }}>
+              <span className="section-number">2</span>Configure Sync
+            </h2>
+            {syncConfig && (
+              <button
+                className="btn btn-outline-danger btn-sm"
+                onClick={handleResetSync}
+                disabled={saving}
+                title="Clear current sync mapping and start fresh with a new sheet/calendar"
+              >
+                🔄 Unsync & Reset Configuration
+              </button>
+            )}
+          </div>
           <div className="config-grid">
             <SheetSelector selectedSheetId={selectedSheetId} onSelect={handleSheetSelect} />
             <CalendarSelector selectedCalendarId={selectedCalendarId} onSelect={handleCalSelect} />
@@ -102,6 +151,15 @@ export default function Dashboard() {
             <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving || !canSave}>
               {saving ? 'Saving...' : syncConfig ? 'Update Configuration' : 'Save Configuration'}
             </button>
+            {syncConfig && (
+              <button
+                className="btn btn-ghost btn-lg"
+                onClick={handleResetSync}
+                disabled={saving}
+              >
+                Reset & Re-establish New Sync
+              </button>
+            )}
             {saveMsg && <span className={'save-message ' + (saveMsg.startsWith('Error') ? 'error' : 'success')}>{saveMsg}</span>}
             {!canSave && <span className="save-hint">Select a sheet, calendar, and map at least Title + Start Date</span>}
           </div>

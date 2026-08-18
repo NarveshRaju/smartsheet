@@ -1,15 +1,45 @@
-import { API_BASE_URL } from '../api/client.js';
+import { useState } from 'react';
+import { API_BASE_URL, api } from '../api/client.js';
 
 interface ConnectionCardProps {
-  provider: 'google' | 'smartsheet'; connected: boolean; label: string;
-  description: string; expiry?: string;
+  provider: 'google' | 'smartsheet';
+  connected: boolean;
+  label: string;
+  description: string;
+  expiry?: string;
+  onDisconnected?: () => void;
 }
 
-export default function ConnectionCard({ provider, connected, label, description, expiry }: ConnectionCardProps) {
+export default function ConnectionCard({
+  provider,
+  connected,
+  label,
+  description,
+  expiry,
+  onDisconnected,
+}: ConnectionCardProps) {
+  const [disconnecting, setDisconnecting] = useState(false);
+
   const handleConnect = () => {
     const base = API_BASE_URL || '';
     window.location.href = `${base}/auth/${provider}`;
   };
+
+  const handleDisconnect = async () => {
+    if (!confirm(`Are you sure you want to disconnect ${label}? You will need to re-authenticate to sync again.`)) {
+      return;
+    }
+    setDisconnecting(true);
+    try {
+      await api.disconnect(provider);
+      onDisconnected?.();
+    } catch (err: any) {
+      alert(`Failed to disconnect: ${err.message}`);
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   return (
     <div className={'connection-card ' + (connected ? 'connected' : 'disconnected')}>
       <div className="connection-icon" data-provider={provider}>
@@ -22,14 +52,28 @@ export default function ConnectionCard({ provider, connected, label, description
       <div className="connection-info">
         <h3>{label}</h3>
         <p>{description}</p>
-        {connected && expiry && <span className="token-expiry">Token expires: {new Date(expiry).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>}
+        {connected && expiry && (
+          <span className="token-expiry">
+            Token expires: {new Date(expiry).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+          </span>
+        )}
       </div>
-      <div className="connection-action">
+      <div className="connection-action" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-end' }}>
         {connected ? (
-          <div className="connected-badge">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
-            Connected
-          </div>
+          <>
+            <div className="connected-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+              Connected
+            </div>
+            <button
+              className="btn btn-outline-danger btn-xs"
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              title={`Disconnect ${label}`}
+            >
+              {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+            </button>
+          </>
         ) : (
           <button className="btn btn-primary" onClick={handleConnect}>Connect</button>
         )}
