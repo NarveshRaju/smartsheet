@@ -7,15 +7,14 @@ let groqClient: Groq | null = null;
 let cachedActiveModel: string | null = null;
 
 const PREFERRED_MODELS = [
-  'qwen/qwen3.6-27b',
-  'qwen3.6-27b',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
   'groq/compound-mini',
   'groq/compound',
+  'qwen/qwen3.6-27b',
+  'qwen3.6-27b',
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
-  'llama3-8b-8192',
   'allam-2-7b',
 ];
 
@@ -30,6 +29,18 @@ function getGroqClient(): Groq | null {
 
 export function isGroqConfigured(): boolean {
   return Boolean(env.GROQ_API_KEY && env.GROQ_API_KEY.trim().length > 0);
+}
+
+function extractJsonFromText(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+    throw new Error('No valid JSON structure found in response');
+  }
 }
 
 /**
@@ -71,10 +82,10 @@ async function resolveGroqModel(client: Groq): Promise<string> {
       return fallbackTextModel;
     }
   } catch (err: any) {
-    logger.warn(`Could not list Groq models: ${err.message}. Defaulting to qwen/qwen3.6-27b`);
+    logger.warn(`Could not list Groq models: ${err.message}. Defaulting to openai/gpt-oss-120b`);
   }
 
-  return 'qwen/qwen3.6-27b';
+  return 'openai/gpt-oss-120b';
 }
 
 /**
@@ -157,32 +168,49 @@ Respond strictly with valid JSON conforming to this schema:
   "status"?: "confirmed" | "tentative" | "cancelled"
 }`;
 
-    const userPrompt = JSON.stringify({
+    const userPrompt = `Please analyze the following row and return ONLY a valid JSON object matching the schema:\n${JSON.stringify({
       rowData: rowContent,
       columnMapping,
       targetTimezone: timezone,
       currentDate: new Date().toISOString().split('T')[0],
-    });
+    })}`;
 
     const modelToUse = await resolveGroqModel(client);
 
-    const completion = await client.chat.completions.create({
-      model: modelToUse,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.1,
-    });
+    let completion: any;
+    try {
+      completion = await client.chat.completions.create({
+        model: modelToUse,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+      });
+    } catch (apiErr: any) {
+      if (apiErr?.message?.includes('json_validate_failed') || apiErr?.status === 400) {
+        logger.debug(`Retrying Groq completion without strict json_object constraint`);
+        completion = await client.chat.completions.create({
+          model: modelToUse,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `${userPrompt}\n\nIMPORTANT: Output ONLY the raw JSON object with no markdown wrappers.` },
+          ],
+          temperature: 0.1,
+        });
+      } else {
+        throw apiErr;
+      }
+    }
 
-    const content = completion.choices[0]?.message?.content;
+    const content = completion?.choices?.[0]?.message?.content;
     if (!content) {
       logger.warn(`Groq returned empty response for row ${row.id}`);
       return null;
     }
 
-    const parsed = JSON.parse(content);
+    const parsed = extractJsonFromText(content);
 
     const hasStart = Boolean(parsed.start?.dateTime || parsed.start?.date);
     const hasEnd = Boolean(parsed.end?.dateTime || parsed.end?.date);
