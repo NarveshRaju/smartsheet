@@ -100,14 +100,24 @@ export async function curateEventWithGroq(
       return null;
     }
 
+    // Fast-check: if start date is blank, immediately skip without LLM call
+    const startDateVal = columnMapping.startDate && row.cells?.[columnMapping.startDate]
+      ? (row.cells[columnMapping.startDate].displayValue || row.cells[columnMapping.startDate].value?.toString() || '').trim()
+      : '';
+
+    if (!startDateVal) {
+      logger.debug(`Row ${row.id}: Start date is blank, skipping calendar sync`);
+      return null;
+    }
+
     const systemPrompt = `You are an expert AI assistant that curates structured Google Calendar events from tabular project data (Smartsheet).
 Analyze the provided row data, column mappings, and timezone to output a structured JSON Google Calendar event object.
 
 CRITICAL RULE:
-If the row does NOT contain a valid time (i.e. start time and end time are blank/missing, or only date-only is provided without time), you MUST output:
+If the row does NOT contain a valid date AND a valid time (i.e. start date is blank/missing, or start time and end time are blank/missing), you MUST output:
 { "skip": true }
 
-Requirements when time is present:
+Requirements when date and time are both present:
 1. "summary": Concise, clear, and professional event title.
 2. "start": An object with "dateTime" (ISO 8601 string with time e.g. "2026-08-18T10:00:00") and "timeZone": "${timezone}".
 3. "end": An object with "dateTime" (ISO 8601 string with time e.g. "2026-08-18T11:00:00") and "timeZone": "${timezone}". Default duration is 1 hour if start time is provided but no end time is specified.

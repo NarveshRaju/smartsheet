@@ -116,8 +116,8 @@ function mapRowToEventStandard(
   const endDateStr = getCellValue(columnMapping.endDate);
   const endTimeStr = getCellValue(columnMapping.endTime);
 
-  if (!startDateStr) {
-    logger.debug(`Row ${row.id}: No start date found, skipping`);
+  if (!startDateStr || !startDateStr.trim()) {
+    logger.debug(`Row ${row.id}: No start date mentioned or date is blank, skipping calendar sync`);
     return null;
   }
 
