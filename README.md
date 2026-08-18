@@ -1,142 +1,132 @@
 # Smartsheet → Google Calendar Sync
 
-A production-ready Node.js + React application for **one-way** synchronization from Smartsheet to Google Calendar.
+A production-ready Node.js + React application for **one-way** synchronization from Smartsheet to Google Calendar with real-time webhooks, PostgreSQL persistence, and a dark glassmorphism dashboard.
 
-## Architecture
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
 
+---
+
+## 🏗 Architecture
+
+```text
+React Dashboard (Vite + TypeScript + SPA)
+        ↓ (proxied in dev / static SPA in prod)
+Node.js REST API (Express + TypeScript + ESM)
+        ↓
+Smartsheet API ──→ Google Calendar API
+        ↓
+PostgreSQL Database (Prisma ORM)
 ```
-React Dashboard (Vite + TypeScript)
-        ↓
-Node.js REST API (Express + TypeScript)
-        ↓
-Smartsheet API → Google Calendar API
-        ↓
-PostgreSQL (Prisma ORM)
-```
 
-## Features
+---
 
-- **OAuth 2.0** for Google Calendar and Smartsheet
-- **One-way sync**: Smartsheet → Google Calendar only
-- **Smartsheet webhooks** for real-time sync
-- **Manual full sync** button
-- **Configurable column mapping** (Title, Start/End Date, Description, Location, Attendees, Status)
-- **Idempotent sync** — retries never create duplicates
-- **AES-256-GCM encrypted** token storage
-- **Rate limiting**, **security headers**, and **secret redaction** in logs
-- **Retry failed records** individually or in bulk
-- **Sync statistics** and error tracking dashboard
+## ✨ Features
 
-## Prerequisites
+- **OAuth 2.0 Integration**: Seamless connect for Google Calendar and Smartsheet.
+- **One-Way Sync**: Smartsheet → Google Calendar only (Google Calendar never modifies Smartsheet).
+- **Real-Time Webhooks**: Automatic synchronization when rows are added, modified, or deleted in Smartsheet.
+- **Manual Full Sync**: On-demand synchronization button with live progress tracking.
+- **Flexible Column Mapping**: Configurable mapping for:
+  - Title / Summary
+  - Start Date & Time
+  - End Date & Time
+  - Description
+  - Location
+  - Attendees
+  - Status (Cancelled, Tentative, Confirmed)
+- **Idempotency Guarantees**: `@@unique([syncConfigId, smartsheetRowId])` constraint prevents duplicate Google Calendar events even during network retries.
+- **Security & Encryption**: OAuth refresh tokens encrypted at rest using **AES-256-GCM**.
+- **Rate Limiting & Protection**: Helmet security headers, rate limiting, and Winston logging with automated secret redaction.
+- **Retry & Recovery Engine**: View failed records, inspect errors, and retry individual rows or all failed items in batch.
+- **Timezone Support**: Defaults to `Asia/Kolkata` (configurable via environment variables).
 
+---
+
+## 🚀 Deploying to Render
+
+This repository is pre-configured with a **Render Blueprint** (`render.yaml`) for automated deployment of both the Fullstack Web Service and PostgreSQL database.
+
+### Method 1: Using the Render Blueprint (Recommended)
+1. Push this repository to your GitHub: `https://github.com/NarveshRaju/smartsheet.git`
+2. Log in to [Render Dashboard](https://dashboard.render.com/).
+3. Click **New +** → **Blueprint**.
+4. Connect your `NarveshRaju/smartsheet` GitHub repository.
+5. Render will automatically detect `render.yaml` and create:
+   - **smartsheet-gcal-db**: Free PostgreSQL Database
+   - **smartsheet-gcal-sync**: Node.js Web Service (running both API and frontend SPA)
+6. In the Render Environment Variables tab for the web service, supply your OAuth keys:
+   - `GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_REDIRECT_URI`: `https://<your-render-app>.onrender.com/auth/google/callback`
+   - `SMARTSHEET_CLIENT_ID` & `SMARTSHEET_CLIENT_SECRET`
+   - `SMARTSHEET_REDIRECT_URI`: `https://<your-render-app>.onrender.com/auth/smartsheet/callback`
+   - `WEBHOOK_CALLBACK_URL`: `https://<your-render-app>.onrender.com/webhooks/smartsheet`
+
+---
+
+## 💻 Local Development Setup
+
+### 1. Prerequisites
 - Node.js 18+
-- PostgreSQL 14+
-- Google Cloud OAuth 2.0 credentials (Calendar API enabled)
-- Smartsheet Developer App credentials
+- PostgreSQL database running locally
 
-## Setup
-
-### 1. Clone & Install
-
+### 2. Install Dependencies
 ```bash
-cd smartsheet-gcal-sync
-
-# Backend
-cd backend
-npm install
-cp .env ../.env  # if not already done
-# Edit .env with your credentials
-
-# Frontend
-cd ../frontend
-npm install
+npm run install:all
 ```
 
-### 2. Configure Environment Variables
-
-Copy `.env.example` to `backend/.env` and fill in:
-
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `SESSION_SECRET` | Random string (16+ chars) |
-| `ENCRYPTION_KEY` | 64-char hex key for token encryption |
-| `GOOGLE_CLIENT_ID` | Google OAuth 2.0 Client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 Client Secret |
-| `SMARTSHEET_CLIENT_ID` | Smartsheet App Client ID |
-| `SMARTSHEET_CLIENT_SECRET` | Smartsheet App Client Secret |
-| `WEBHOOK_CALLBACK_URL` | Public URL for Smartsheet webhooks (use ngrok for local dev) |
-
-Generate an encryption key:
+### 3. Configure Environment Variables
+Copy `.env.example` to `.env` (or `backend/.env`):
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+cp .env.example .env
 ```
 
-### 3. Set Up Database
+Fill in your database URL and OAuth credentials.
 
+### 4. Initialize Database
 ```bash
-cd backend
-
-# Create the database
-npx prisma migrate dev --name init
-
-# Generate Prisma client
-npx prisma generate
+npm run db:push
 ```
 
-### 4. Run
-
+### 5. Run Locally
 ```bash
-# Terminal 1: Backend
-cd backend
-npm run dev
+# Run backend (port 3001)
+npm run dev:backend
 
-# Terminal 2: Frontend
-cd frontend
-npm run dev
+# In a separate terminal, run frontend (port 5173)
+npm run dev:frontend
 ```
 
-Open http://localhost:5173
+Open `http://localhost:5173` in your browser.
 
-### 5. Webhooks (Optional)
+---
 
-For real-time sync, expose your backend via ngrok:
+## 📡 API Endpoints
 
-```bash
-ngrok http 3001
-```
-
-Update `WEBHOOK_CALLBACK_URL` in .env with the ngrok URL.
-
-## API Endpoints
-
-| Method | Path | Description |
+| Method | Endpoint | Description |
 |---|---|---|
-| GET | `/auth/google` | Start Google OAuth |
-| GET | `/auth/google/callback` | Google OAuth callback |
-| GET | `/auth/smartsheet` | Start Smartsheet OAuth |
-| GET | `/auth/smartsheet/callback` | Smartsheet OAuth callback |
-| GET | `/auth/status` | Get connection status |
-| GET | `/api/google/calendars` | List Google Calendars |
-| GET | `/api/smartsheet/sheets` | List Smartsheet sheets |
-| GET | `/api/smartsheet/sheets/:id/columns` | Get sheet columns |
-| POST | `/api/sync/config` | Create sync config |
-| GET | `/api/sync/config` | Get sync config |
-| PUT | `/api/sync/config` | Update sync config |
-| POST | `/api/sync/full` | Trigger full sync |
-| POST | `/api/sync/:rowId/retry` | Retry failed row |
-| GET | `/api/sync/status` | Get sync statistics |
-| POST | `/webhooks/smartsheet` | Smartsheet webhook handler |
+| `GET` | `/health` | Health check and uptime status |
+| `GET` | `/auth/google` | Initiate Google OAuth 2.0 flow |
+| `GET` | `/auth/google/callback` | Handle Google OAuth redirect |
+| `GET` | `/auth/smartsheet` | Initiate Smartsheet OAuth 2.0 flow |
+| `GET` | `/auth/smartsheet/callback` | Handle Smartsheet OAuth redirect |
+| `GET` | `/auth/status` | Check active connection status |
+| `GET` | `/api/google/calendars` | Fetch available Google Calendars |
+| `GET` | `/api/smartsheet/sheets` | Fetch available Smartsheet sheets |
+| `GET` | `/api/smartsheet/sheets/:id/columns` | Fetch sheet column definitions |
+| `POST` | `/api/sync/config` | Save synchronization settings & column mapping |
+| `GET` | `/api/sync/config` | Retrieve current synchronization configuration |
+| `PUT` | `/api/sync/config` | Update synchronization configuration |
+| `POST` | `/api/sync/full` | Trigger manual full synchronization |
+| `POST` | `/api/sync/:rowId` | Sync a single Smartsheet row |
+| `POST` | `/api/sync/:rowId/retry` | Retry failed sync for a specific row |
+| `GET` | `/api/sync/status` | Get real-time stats and failure logs |
+| `POST` | `/webhooks/smartsheet` | Smartsheet webhook receiver |
 
-## Timezone
+---
 
-Default timezone is `Asia/Kolkata`. Configure via `DEFAULT_TIMEZONE` in .env.
+## 🔐 Security Details
 
-## Security
-
-- OAuth tokens encrypted with AES-256-GCM at rest
-- Session-based auth with httpOnly cookies
-- Helmet security headers
-- Rate limiting on API and sync endpoints
-- Secrets never logged (Winston redaction)
-- CORS restricted to frontend origin
+1. **Token Encryption**: Refresh tokens are encrypted with **AES-256-GCM** before database storage.
+2. **Credential Isolation**: Client secrets and access tokens stay strictly on the Node.js backend and are never sent to the browser.
+3. **Log Sanitization**: Winston logger automatically redacts sensitive keywords (tokens, passwords, authorization headers).
+4. **Session Protection**: HTTP-only, secure, same-site session cookies with reverse-proxy trust for Render.
