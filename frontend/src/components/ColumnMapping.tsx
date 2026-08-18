@@ -5,13 +5,15 @@ import type { Column, ColumnMapping as CMType } from '../types/index.js';
 interface Props { sheetId?: string; mapping: CMType; onChange: (m: CMType) => void; disabled?: boolean; }
 
 const FIELDS = [
-  { key: 'title', label: 'Title', icon: '📝', required: true, desc: 'Event title/summary' },
-  { key: 'startDate', label: 'Start Date/Time', icon: '🕐', required: true, desc: 'When the event starts' },
-  { key: 'endDate', label: 'End Date/Time', icon: '🕑', required: false, desc: 'When the event ends' },
-  { key: 'description', label: 'Description', icon: '📄', required: false, desc: 'Event details' },
-  { key: 'location', label: 'Location', icon: '📍', required: false, desc: 'Event location' },
-  { key: 'attendee', label: 'Attendees', icon: '👥', required: false, desc: 'Comma-separated emails' },
-  { key: 'status', label: 'Status', icon: '🔖', required: false, desc: 'Event status mapping' },
+  { key: 'title', label: 'Event Title / Summary', icon: '📝', required: true, desc: 'Name of the event' },
+  { key: 'startDate', label: 'Start Date (or Date & Time)', icon: '📅', required: true, desc: 'Date (or combined DateTime) column' },
+  { key: 'startTime', label: 'Start Time (Optional)', icon: '🕐', required: false, desc: 'Separate time column (e.g. 10:00 AM)' },
+  { key: 'endDate', label: 'End Date', icon: '📅', required: false, desc: 'End date column (optional)' },
+  { key: 'endTime', label: 'End Time (Optional)', icon: '🕑', required: false, desc: 'Separate end time column (e.g. 11:30 AM)' },
+  { key: 'description', label: 'Description / Notes', icon: '📄', required: false, desc: 'Event details / body text' },
+  { key: 'location', label: 'Location / Link', icon: '📍', required: false, desc: 'Event location or meeting link' },
+  { key: 'attendee', label: 'Attendees (Emails)', icon: '👥', required: false, desc: 'Comma-separated guest emails' },
+  { key: 'status', label: 'Status', icon: '🔖', required: false, desc: 'Status (Confirmed / Tentative / Cancelled)' },
 ] as const;
 
 export default function ColumnMapping({ sheetId, mapping, onChange, disabled }: Props) {

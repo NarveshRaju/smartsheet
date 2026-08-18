@@ -7,6 +7,90 @@ import type { CalendarEventData, ColumnMapping, SyncResult } from '../types/inde
 
 const prisma = new PrismaClient();
 
+interface ParsedDateTimeResult {
+  dateOnly: string; // YYYY-MM-DD
+  dateTime?: string; // ISO string
+  hasTime: boolean;
+}
+
+function parseSmartsheetDateTime(
+  dateStr?: string,
+  timeStr?: string,
+  defaultHour: number = 9,
+  defaultMinute: number = 0
+): ParsedDateTimeResult | null {
+  if (!dateStr || !dateStr.trim()) return null;
+
+  const dStr = dateStr.trim();
+  const tStr = timeStr ? timeStr.trim() : '';
+
+  // Check if dateStr itself already contains a time (e.g. 2026-08-18T10:00:00 or 2026-08-18 10:00 AM)
+  const dateHasTime = /\d{1,2}:\d{2}/.test(dStr);
+  const hasTime = dateHasTime || (tStr !== '' && /\d{1,2}:\d{2}/.test(tStr));
+
+  // If time is provided separately and dateStr doesn't have time:
+  let combinedStr = dStr;
+  if (!dateHasTime && tStr && /\d{1,2}:\d{2}/.test(tStr)) {
+    combinedStr = `${dStr} ${tStr}`;
+  }
+
+  // Try standard Date parse
+  let parsed = new Date(combinedStr);
+
+  // If invalid, attempt manual component extraction
+  if (isNaN(parsed.getTime())) {
+    const dateMatch =
+      dStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/) ||
+      dStr.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+
+    if (dateMatch) {
+      let year = 0, month = 0, day = 0;
+      if (dateMatch[1].length === 4) {
+        year = parseInt(dateMatch[1], 10);
+        month = parseInt(dateMatch[2], 10) - 1;
+        day = parseInt(dateMatch[3], 10);
+      } else {
+        year = parseInt(dateMatch[3], 10);
+        month = parseInt(dateMatch[1], 10) - 1;
+        day = parseInt(dateMatch[2], 10);
+      }
+
+      let hour = defaultHour;
+      let minute = defaultMinute;
+
+      const timeSource = tStr || (dateHasTime ? dStr : '');
+      if (timeSource) {
+        const timeMatch = timeSource.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+        if (timeMatch) {
+          hour = parseInt(timeMatch[1], 10);
+          minute = parseInt(timeMatch[2], 10);
+          const ampm = timeMatch[4]?.toLowerCase();
+          if (ampm === 'pm' && hour < 12) hour += 12;
+          if (ampm === 'am' && hour === 12) hour = 0;
+        }
+      }
+
+      parsed = new Date(year, month, day, hour, minute);
+    }
+  }
+
+  if (isNaN(parsed.getTime())) {
+    logger.warn(`Could not parse date/time from date: "${dateStr}", time: "${timeStr}"`);
+    return null;
+  }
+
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  const dateOnly = `${y}-${m}-${d}`;
+
+  return {
+    dateOnly,
+    dateTime: parsed.toISOString(),
+    hasTime,
+  };
+}
+
 /**
  * Map a Smartsheet row to Google Calendar event data using the configured column mapping.
  */
@@ -27,38 +111,48 @@ function mapRowToEvent(
   }
 
   const startDateStr = getCellValue(columnMapping.startDate);
+  const startTimeStr = getCellValue(columnMapping.startTime);
   const endDateStr = getCellValue(columnMapping.endDate);
+  const endTimeStr = getCellValue(columnMapping.endTime);
 
   if (!startDateStr) {
     logger.debug(`Row ${row.id}: No start date found, skipping`);
     return null;
   }
 
-  // Determine if we have time or just date
-  const hasTime = (str: string) => /\d{1,2}:\d{2}/.test(str);
+  const startParsed = parseSmartsheetDateTime(startDateStr, startTimeStr, 9, 0);
+  if (!startParsed) {
+    logger.debug(`Row ${row.id}: Invalid start date "${startDateStr}", skipping`);
+    return null;
+  }
 
-  const startHasTime = hasTime(startDateStr);
-  const startDate = new Date(startDateStr);
-
-  let endDate: Date;
-  if (endDateStr) {
-    endDate = new Date(endDateStr);
-  } else {
-    // Default: 1 hour for timed events, same day for all-day events
-    endDate = new Date(startDate);
-    if (startHasTime) {
-      endDate.setHours(endDate.getHours() + 1);
+  let endParsed = parseSmartsheetDateTime(endDateStr || startDateStr, endTimeStr, 10, 0);
+  if (!endParsed || (!endDateStr && !endTimeStr && startParsed.hasTime)) {
+    // If no end date/time is provided, default to 1 hour after start if timed, or same day if all-day
+    if (startParsed.hasTime && startParsed.dateTime) {
+      const sDate = new Date(startParsed.dateTime);
+      sDate.setHours(sDate.getHours() + 1);
+      endParsed = {
+        dateTime: sDate.toISOString(),
+        dateOnly: startParsed.dateOnly,
+        hasTime: true,
+      };
+    } else {
+      endParsed = {
+        dateOnly: startParsed.dateOnly,
+        hasTime: false,
+      };
     }
   }
 
   const event: CalendarEventData = {
     summary: title,
-    start: startHasTime
-      ? { dateTime: startDate.toISOString(), timeZone: timezone }
-      : { date: startDate.toISOString().split('T')[0], timeZone: timezone },
-    end: startHasTime || (endDateStr && hasTime(endDateStr))
-      ? { dateTime: endDate.toISOString(), timeZone: timezone }
-      : { date: endDate.toISOString().split('T')[0], timeZone: timezone },
+    start: startParsed.hasTime && startParsed.dateTime
+      ? { dateTime: startParsed.dateTime, timeZone: timezone }
+      : { date: startParsed.dateOnly, timeZone: timezone },
+    end: (startParsed.hasTime || endParsed.hasTime) && endParsed.dateTime
+      ? { dateTime: endParsed.dateTime, timeZone: timezone }
+      : { date: endParsed.dateOnly, timeZone: timezone },
   };
 
   const description = getCellValue(columnMapping.description);

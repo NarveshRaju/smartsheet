@@ -12,8 +12,15 @@ export interface Column { id: string; title: string; type: string; index: number
 export interface Calendar { id: string; summary: string; description?: string; primary?: boolean; backgroundColor?: string; }
 
 export interface ColumnMapping {
-  title?: string; startDate?: string; endDate?: string;
-  description?: string; location?: string; attendee?: string; status?: string;
+  title?: string;
+  startDate?: string;
+  startTime?: string;
+  endDate?: string;
+  endTime?: string;
+  description?: string;
+  location?: string;
+  attendee?: string;
+  status?: string;
 }
 
 export interface SyncConfig {

@@ -20,7 +20,9 @@ const syncConfigSchema = z.object({
   columnMapping: z.object({
     title: z.string().optional(),
     startDate: z.string().optional(),
+    startTime: z.string().optional(),
     endDate: z.string().optional(),
+    endTime: z.string().optional(),
     description: z.string().optional(),
     location: z.string().optional(),
     attendee: z.string().optional(),

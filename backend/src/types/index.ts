@@ -3,7 +3,9 @@ import type { Request } from 'express';
 export interface ColumnMapping {
   title?: string;
   startDate?: string;
+  startTime?: string;
   endDate?: string;
+  endTime?: string;
   description?: string;
   location?: string;
   attendee?: string;

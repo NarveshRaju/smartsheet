@@ -99,7 +99,11 @@ export default function Dashboard() {
   );
 
   const both = authStatus?.google && authStatus?.smartsheet;
-  const canSave = selectedSheetId && selectedCalendarId && columnMapping.title && columnMapping.startDate;
+  const hasSheet = Boolean(selectedSheetId);
+  const hasCalendar = Boolean(selectedCalendarId);
+  const hasTitle = Boolean(columnMapping.title);
+  const hasStartDate = Boolean(columnMapping.startDate);
+  const canSave = hasSheet && hasCalendar && hasTitle && hasStartDate;
 
   return (
     <Layout authStatus={authStatus}>
@@ -161,7 +165,21 @@ export default function Dashboard() {
               </button>
             )}
             {saveMsg && <span className={'save-message ' + (saveMsg.startsWith('Error') ? 'error' : 'success')}>{saveMsg}</span>}
-            {!canSave && <span className="save-hint">Select a sheet, calendar, and map at least Title + Start Date</span>}
+            
+            <div className="validation-checklist">
+              <span className={'check-badge ' + (hasSheet ? 'valid' : 'invalid')}>
+                {hasSheet ? `✓ Sheet: ${selectedSheetName || selectedSheetId}` : '✗ Select a Smartsheet'}
+              </span>
+              <span className={'check-badge ' + (hasCalendar ? 'valid' : 'invalid')}>
+                {hasCalendar ? `✓ Calendar: ${selectedCalendarName || selectedCalendarId}` : '✗ Select a Google Calendar'}
+              </span>
+              <span className={'check-badge ' + (hasTitle ? 'valid' : 'invalid')}>
+                {hasTitle ? '✓ Event Title Mapped' : '✗ Map Event Title Column'}
+              </span>
+              <span className={'check-badge ' + (hasStartDate ? 'valid' : 'invalid')}>
+                {hasStartDate ? '✓ Start Date Mapped' : '✗ Map Start Date Column'}
+              </span>
+            </div>
           </div>
         </section>
       )}

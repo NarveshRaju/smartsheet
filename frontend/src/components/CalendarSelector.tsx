@@ -13,7 +13,14 @@ export default function CalendarSelector({ selectedCalendarId, onSelect, disable
 
   const load = async () => {
     setLoading(true); setError(null);
-    try { const { calendars } = await api.getCalendars(); setCalendars(calendars); }
+    try {
+      const { calendars: list } = await api.getCalendars();
+      setCalendars(list);
+      if (list.length > 0 && !selectedCalendarId) {
+        const primary = list.find((c) => c.primary) || list[0];
+        if (primary) onSelect(primary);
+      }
+    }
     catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
   };
