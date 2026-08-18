@@ -4,7 +4,7 @@
   "private": true,
   "description": "One-way Smartsheet to Google Calendar synchronization with real-time webhooks and React dashboard",
   "scripts": {
-    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "install:all": "npm install --prefix backend --include=dev && npm install --prefix frontend --include=dev",
     "build": "npm run build --prefix backend && npm run build --prefix frontend",
     "start": "npm run start --prefix backend",
     "dev:backend": "npm run dev --prefix backend",

@@ -25,12 +25,16 @@ const envSchema = z.object({
   RENDER_EXTERNAL_URL: z.string().optional(),
 });
 
-const parsed = envSchema.safeParse(process.env);
-
-if (!parsed.success) {
-  console.error('❌ Invalid environment variables:');
-  console.error(parsed.error.flatten().fieldErrors);
+let parsedEnv: z.infer<typeof envSchema>;
+try {
+  parsedEnv = envSchema.parse(process.env);
+} catch (error) {
+  if (error instanceof z.ZodError) {
+    console.error('❌ Invalid environment variables:');
+    console.error(error.flatten().fieldErrors);
+  }
   process.exit(1);
 }
 
-export const env = parsed.data;
+export const env = parsedEnv;
+
