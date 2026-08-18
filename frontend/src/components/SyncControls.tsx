@@ -2,9 +2,15 @@ import { useState } from 'react';
 import { api } from '../api/client.js';
 import type { SyncResult } from '../types/index.js';
 
-interface Props { isEnabled: boolean; hasConfig: boolean; onToggleSync: (e: boolean) => void; onSyncComplete: () => void; }
+interface Props {
+  isEnabled: boolean;
+  hasConfig: boolean;
+  isAiConfigured?: boolean;
+  onToggleSync: (e: boolean) => void;
+  onSyncComplete: () => void;
+}
 
-export default function SyncControls({ isEnabled, hasConfig, onToggleSync, onSyncComplete }: Props) {
+export default function SyncControls({ isEnabled, hasConfig, isAiConfigured, onToggleSync, onSyncComplete }: Props) {
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -18,16 +24,25 @@ export default function SyncControls({ isEnabled, hasConfig, onToggleSync, onSyn
 
   return (
     <div className="sync-controls-card">
-      <h3>⚡ Sync Controls</h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <h3 style={{ margin: 0 }}>⚡ Sync Controls</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span className={'check-badge ' + (isAiConfigured ? 'valid' : '')} style={{ fontSize: '0.75rem' }}>
+            {isAiConfigured ? '🤖 Groq AI Curation: Active' : '⚙️ Standard Parsing (Add GROQ_API_KEY for AI)'}
+          </span>
+        </div>
+      </div>
       <div className="sync-toggle">
         <label className="toggle-label">
-          <span>Automatic Sync (Webhooks)</span>
+          <span>Automatic Real-Time & Background Auto-Sync</span>
           <div className={'toggle-switch ' + (isEnabled ? 'active' : '')} onClick={() => onToggleSync(!isEnabled)}>
             <div className="toggle-thumb" />
           </div>
         </label>
         <p className="toggle-description">
-          {isEnabled ? 'Smartsheet changes will automatically sync to Google Calendar' : 'Enable to auto-sync changes via Smartsheet webhooks'}
+          {isEnabled
+            ? '✅ Auto-sync is active! Changes in Smartsheet will automatically sync to Google Calendar via real-time webhooks and background polling (every 30s).'
+            : 'Enable to auto-sync row changes from Smartsheet to Google Calendar automatically.'}
         </p>
       </div>
       <div className="sync-actions">

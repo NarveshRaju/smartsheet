@@ -16,10 +16,15 @@ const prisma = new PrismaClient();
  */
 router.post('/smartsheet', webhookLimiter, async (req: Request, res: Response) => {
   try {
-    // Handle Smartsheet verification challenge
-    const challenge = req.headers['smartsheet-hook-challenge'];
+    // Handle Smartsheet verification challenge (via header, body, or query)
+    const challenge =
+      (req.headers['smartsheet-hook-challenge'] as string) ||
+      (req.body && req.body.challenge) ||
+      (req.body && req.body.smartsheetHookChallenge) ||
+      (req.query && (req.query.challenge as string));
+
     if (challenge) {
-      logger.info('Smartsheet webhook verification challenge received');
+      logger.info(`Smartsheet webhook verification challenge received: ${challenge}`);
       res.status(200).json({ smartsheetHookResponse: challenge });
       return;
     }

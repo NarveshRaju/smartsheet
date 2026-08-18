@@ -43,6 +43,7 @@ export interface SyncStatus {
   stats: SyncStats | null;
   failedRecords: SyncRecord[];
   recentRecords: SyncRecord[];
+  isAiConfigured?: boolean;
 }
 
 export interface SyncResult {

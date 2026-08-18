@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as googleService from './google.service.js';
 import * as smartsheetService from './smartsheet.service.js';
+import { curateEventWithGroq, isGroqConfigured } from './groq.service.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { CalendarEventData, ColumnMapping, SyncResult } from '../types/index.js';
@@ -92,9 +93,9 @@ function parseSmartsheetDateTime(
 }
 
 /**
- * Map a Smartsheet row to Google Calendar event data using the configured column mapping.
+ * Standard algorithmic row mapper.
  */
-function mapRowToEvent(
+function mapRowToEventStandard(
   row: any,
   columnMapping: ColumnMapping,
   timezone: string
@@ -128,7 +129,6 @@ function mapRowToEvent(
 
   let endParsed = parseSmartsheetDateTime(endDateStr || startDateStr, endTimeStr, 10, 0);
   if (!endParsed || (!endDateStr && !endTimeStr && startParsed.hasTime)) {
-    // If no end date/time is provided, default to 1 hour after start if timed, or same day if all-day
     if (startParsed.hasTime && startParsed.dateTime) {
       const sDate = new Date(startParsed.dateTime);
       sDate.setHours(sDate.getHours() + 1);
@@ -163,7 +163,6 @@ function mapRowToEvent(
 
   const attendee = getCellValue(columnMapping.attendee);
   if (attendee) {
-    // Support comma-separated emails
     event.attendees = attendee
       .split(/[,;\s]+/)
       .filter((e) => e.includes('@'))
@@ -172,7 +171,6 @@ function mapRowToEvent(
 
   const status = getCellValue(columnMapping.status);
   if (status) {
-    // Map common status values
     const statusLower = status.toLowerCase();
     if (statusLower.includes('cancel')) {
       event.status = 'cancelled';
@@ -184,6 +182,30 @@ function mapRowToEvent(
   }
 
   return event;
+}
+
+/**
+ * Map a Smartsheet row to Google Calendar event data.
+ * If Groq LLM is configured, it uses AI to curate rich event data,
+ * otherwise falls back to standard algorithmic mapper.
+ */
+async function mapRowToEvent(
+  row: any,
+  columnMapping: ColumnMapping,
+  timezone: string
+): Promise<CalendarEventData | null> {
+  if (isGroqConfigured()) {
+    try {
+      const aiEvent = await curateEventWithGroq(row, columnMapping, timezone);
+      if (aiEvent) {
+        return aiEvent;
+      }
+    } catch (e: any) {
+      logger.warn(`Groq curation error: ${e.message}, falling back to standard mapper`);
+    }
+  }
+
+  return mapRowToEventStandard(row, columnMapping, timezone);
 }
 
 /**
@@ -231,7 +253,7 @@ export async function fullSync(configId: string): Promise<SyncResult> {
       const existingRecord = recordMap.get(rowId);
 
       try {
-        const eventData = mapRowToEvent(row, columnMapping, timezone);
+        const eventData = await mapRowToEvent(row, columnMapping, timezone);
         if (!eventData) continue; // Skip rows without required fields
 
         if (!existingRecord) {
@@ -432,7 +454,7 @@ export async function syncRow(
       return;
     }
 
-    const eventData = mapRowToEvent(row, columnMapping, timezone);
+    const eventData = await mapRowToEvent(row, columnMapping, timezone);
     if (!eventData) {
       logger.debug(`Row ${rowId}: Missing required fields, skipping`);
       return;
@@ -562,4 +584,62 @@ export async function getSyncStatus(configId: string) {
     failedRecords,
     recentRecords,
   };
+}
+
+// ── Background Auto-Sync Polling Worker ───────────────────
+
+let autoSyncTimer: NodeJS.Timeout | null = null;
+let isSyncRunning = false;
+
+export function startAutoSyncWorker(): void {
+  if (autoSyncTimer) return;
+
+  const intervalMs = parseInt(env.AUTO_SYNC_INTERVAL_MS, 10) || 30000;
+  logger.info(`🔄 Starting Auto-Sync background worker (polling every ${intervalMs / 1000}s)`);
+
+  // Run a quick tick shortly after start
+  setTimeout(async () => {
+    await runAutoSyncTick();
+  }, 5000);
+
+  autoSyncTimer = setInterval(async () => {
+    await runAutoSyncTick();
+  }, intervalMs);
+}
+
+async function runAutoSyncTick(): Promise<void> {
+  if (isSyncRunning) {
+    logger.debug('Auto-sync already in progress, skipping tick');
+    return;
+  }
+
+  try {
+    isSyncRunning = true;
+    const activeConfigs = await prisma.syncConfiguration.findMany({
+      where: { isEnabled: true },
+    });
+
+    for (const config of activeConfigs) {
+      try {
+        const result = await fullSync(config.id);
+        if (result.created > 0 || result.updated > 0 || result.deleted > 0) {
+          logger.info(`⚡ Auto-sync updated config ${config.id}: +${result.created} ~${result.updated} -${result.deleted}`);
+        }
+      } catch (err: any) {
+        logger.warn(`Auto-sync tick error for config ${config.id}: ${err.message}`);
+      }
+    }
+  } catch (error: any) {
+    logger.error(`Auto-sync worker error: ${error.message}`);
+  } finally {
+    isSyncRunning = false;
+  }
+}
+
+export function stopAutoSyncWorker(): void {
+  if (autoSyncTimer) {
+    clearInterval(autoSyncTimer);
+    autoSyncTimer = null;
+    logger.info('⏹️ Auto-Sync background worker stopped');
+  }
 }

@@ -23,6 +23,8 @@ const envSchema = z.object({
   WEBHOOK_CALLBACK_URL: z.string().optional(),
   DEFAULT_TIMEZONE: z.string().default('Asia/Kolkata'),
   RENDER_EXTERNAL_URL: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
+  AUTO_SYNC_INTERVAL_MS: z.string().default('30000'),
 });
 
 let parsedEnv: z.infer<typeof envSchema>;

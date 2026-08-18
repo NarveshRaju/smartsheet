@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import * as syncService from '../services/sync.service.js';
 import * as webhookService from '../services/webhook.service.js';
+import { isGroqConfigured } from '../services/groq.service.js';
 import { requireAuth } from '../middleware/auth.js';
 import { syncLimiter } from '../middleware/rateLimiter.js';
 import { env } from '../config/env.js';
@@ -57,13 +58,12 @@ router.post('/config', async (req: Request, res: Response, next: NextFunction) =
       },
     });
 
-    // Try to create webhook if enabled and callback URL is available
-    if (data.isEnabled && env.WEBHOOK_CALLBACK_URL) {
+    // Try to create webhook if enabled
+    if (data.isEnabled) {
       try {
         const webhookId = await webhookService.createWebhook(
           userId,
-          data.smartsheetSheetId,
-          env.WEBHOOK_CALLBACK_URL
+          data.smartsheetSheetId
         );
         await prisma.syncConfiguration.update({
           where: { id: config.id },
@@ -71,7 +71,7 @@ router.post('/config', async (req: Request, res: Response, next: NextFunction) =
         });
         config.webhookId = webhookId;
       } catch (error: any) {
-        logger.warn(`Failed to create webhook: ${error.message}. Sync will work via manual trigger.`);
+        logger.warn(`Failed to create webhook: ${error.message}. Auto-sync worker will handle syncing.`);
       }
     }
 
@@ -87,7 +87,7 @@ router.get('/config', async (req: Request, res: Response, next: NextFunction) =>
   try {
     const userId = req.session.userId!;
     const config = await prisma.syncConfiguration.findFirst({ where: { userId } });
-    res.json({ config: config || null });
+    res.json({ config: config || null, isAiConfigured: isGroqConfigured() });
   } catch (error) {
     next(error);
   }
@@ -108,18 +108,17 @@ router.put('/config', async (req: Request, res: Response, next: NextFunction) =>
 
     // Handle webhook lifecycle when toggling isEnabled
     if (data.isEnabled !== undefined && data.isEnabled !== existing.isEnabled) {
-      if (data.isEnabled && env.WEBHOOK_CALLBACK_URL) {
+      if (data.isEnabled) {
         // Enable: create webhook
         try {
           const webhookId = await webhookService.createWebhook(
             userId,
-            data.smartsheetSheetId || existing.smartsheetSheetId,
-            env.WEBHOOK_CALLBACK_URL
+            data.smartsheetSheetId || existing.smartsheetSheetId
           );
           data.isEnabled = true;
           (data as any).webhookId = webhookId;
         } catch (error: any) {
-          logger.warn(`Failed to create webhook: ${error.message}`);
+          logger.warn(`Failed to create webhook: ${error.message}. Auto-sync worker will handle syncing.`);
         }
       } else if (!data.isEnabled && existing.webhookId) {
         // Disable: delete webhook
@@ -256,12 +255,12 @@ router.get('/status', async (req: Request, res: Response, next: NextFunction) =>
     const userId = req.session.userId!;
     const config = await prisma.syncConfiguration.findFirst({ where: { userId } });
     if (!config) {
-      res.json({ config: null, stats: null, failedRecords: [], recentRecords: [] });
+      res.json({ config: null, stats: null, failedRecords: [], recentRecords: [], isAiConfigured: isGroqConfigured() });
       return;
     }
 
     const status = await syncService.getSyncStatus(config.id);
-    res.json(status);
+    res.json({ ...status, isAiConfigured: isGroqConfigured() });
   } catch (error) {
     next(error);
   }

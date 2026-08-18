@@ -15,6 +15,8 @@ import googleRoutes from './routes/google.routes.js';
 import smartsheetRoutes from './routes/smartsheet.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
+import { startAutoSyncWorker } from './services/sync.service.js';
+import { isGroqConfigured } from './services/groq.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -128,6 +130,10 @@ app.listen(PORT, '0.0.0.0', () => {
   logger.info(`📋 Environment: ${env.NODE_ENV}`);
   logger.info(`🌐 Frontend URL: ${env.FRONTEND_URL || 'Self-hosted'}`);
   logger.info(`🕐 Default timezone: ${env.DEFAULT_TIMEZONE}`);
+  logger.info(`🤖 Groq AI Curation: ${isGroqConfigured() ? 'Active (llama-3.3-70b-versatile)' : 'Disabled (Add GROQ_API_KEY to activate)'}`);
+
+  // Start periodic background auto-sync worker (guaranteed fallback for sheet updates)
+  startAutoSyncWorker();
 });
 
 export default app;

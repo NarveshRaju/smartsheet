@@ -18,21 +18,32 @@ async function getAccessToken(userId: string): Promise<string> {
   return decrypt(account.accessToken);
 }
 
+export function getWebhookCallbackUrl(): string {
+  if (env.WEBHOOK_CALLBACK_URL && env.WEBHOOK_CALLBACK_URL.trim().length > 0) {
+    return env.WEBHOOK_CALLBACK_URL.trim();
+  }
+  if (env.RENDER_EXTERNAL_URL && env.RENDER_EXTERNAL_URL.trim().length > 0) {
+    return `${env.RENDER_EXTERNAL_URL.trim()}/webhooks/smartsheet`;
+  }
+  return 'https://smartsheet-gcal-sync.onrender.com/webhooks/smartsheet';
+}
+
 export async function createWebhook(
   userId: string,
   sheetId: string,
-  callbackUrl: string
+  callbackUrl?: string
 ): Promise<string> {
   const token = await getAccessToken(userId);
+  const targetCallbackUrl = callbackUrl || getWebhookCallbackUrl();
 
   return withRetry(async () => {
     const response = await axios.post(
       `${SMARTSHEET_API}/webhooks`,
       {
         name: `SmartsheetGCalSync-${sheetId}`,
-        callbackUrl,
+        callbackUrl: targetCallbackUrl,
         scope: 'sheet',
-        scopeObjectId: parseInt(sheetId),
+        scopeObjectId: parseInt(sheetId, 10),
         events: ['*.*'],
         version: 1,
       },
@@ -44,22 +55,26 @@ export async function createWebhook(
       }
     );
 
-    const webhookId = response.data.result.id.toString();
+    const webhookId = response.data.result?.id?.toString() || response.data.id?.toString();
     logger.info(`Created Smartsheet webhook: ${webhookId}`);
 
     // Enable the webhook
-    await axios.put(
-      `${SMARTSHEET_API}/webhooks/${webhookId}`,
-      { enabled: true },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    try {
+      await axios.put(
+        `${SMARTSHEET_API}/webhooks/${webhookId}`,
+        { enabled: true },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      logger.info(`Enabled Smartsheet webhook: ${webhookId}`);
+    } catch (putErr: any) {
+      logger.warn(`Could not immediately enable webhook ${webhookId}: ${putErr.message}`);
+    }
 
-    logger.info(`Enabled Smartsheet webhook: ${webhookId}`);
     return webhookId;
   });
 }

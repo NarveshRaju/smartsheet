@@ -187,7 +187,13 @@ export default function Dashboard() {
       {syncConfig && (
         <section className="dashboard-section">
           <h2 className="section-title"><span className="section-number">3</span>Synchronize</h2>
-          <SyncControls isEnabled={syncConfig.isEnabled} hasConfig={!!syncConfig} onToggleSync={handleToggle} onSyncComplete={refreshStatus} />
+          <SyncControls
+            isEnabled={syncConfig.isEnabled}
+            hasConfig={!!syncConfig}
+            isAiConfigured={syncStatus?.isAiConfigured}
+            onToggleSync={handleToggle}
+            onSyncComplete={refreshStatus}
+          />
         </section>
       )}
 
