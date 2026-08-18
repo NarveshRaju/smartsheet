@@ -1,0 +1,127 @@
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../api/client.js';
+import Layout from '../components/Layout.js';
+import ConnectionCard from '../components/ConnectionCard.js';
+import SheetSelector from '../components/SheetSelector.js';
+import CalendarSelector from '../components/CalendarSelector.js';
+import ColumnMapping from '../components/ColumnMapping.js';
+import SyncControls from '../components/SyncControls.js';
+import SyncStats from '../components/SyncStats.js';
+import ErrorList from '../components/ErrorList.js';
+import type { AuthStatus, SyncConfig, SyncStatus, ColumnMapping as CMType, Sheet, Calendar } from '../types/index.js';
+
+export default function Dashboard() {
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [selectedSheetId, setSelectedSheetId] = useState('');
+  const [selectedSheetName, setSelectedSheetName] = useState('');
+  const [selectedCalendarId, setSelectedCalendarId] = useState('');
+  const [selectedCalendarName, setSelectedCalendarName] = useState('');
+  const [columnMapping, setColumnMapping] = useState<CMType>({});
+
+  const loadData = useCallback(async () => {
+    try {
+      const [auth, config, status] = await Promise.all([
+        api.getAuthStatus(),
+        api.getSyncConfig().catch(() => ({ config: null })),
+        api.getSyncStatus().catch(() => null),
+      ]);
+      setAuthStatus(auth);
+      setSyncConfig(config.config);
+      setSyncStatus(status);
+      if (config.config) {
+        setSelectedSheetId(config.config.smartsheetSheetId);
+        setSelectedSheetName(config.config.sheetName || '');
+        setSelectedCalendarId(config.config.googleCalendarId);
+        setSelectedCalendarName(config.config.calendarName || '');
+        setColumnMapping(config.config.columnMapping);
+      }
+    } catch (err) { console.error('Failed to load:', err); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('auth') || p.get('error')) { window.history.replaceState({}, '', '/'); loadData(); }
+  }, [loadData]);
+
+  const handleSave = async () => {
+    setSaving(true); setSaveMsg(null);
+    try {
+      const data = { smartsheetSheetId: selectedSheetId, sheetName: selectedSheetName,
+        googleCalendarId: selectedCalendarId, calendarName: selectedCalendarName, columnMapping };
+      const { config } = syncConfig ? await api.updateSyncConfig(data) : await api.createSyncConfig(data);
+      setSyncConfig(config);
+      setSaveMsg('Configuration saved!'); setTimeout(() => setSaveMsg(null), 3000);
+    } catch (err: any) { setSaveMsg('Error: ' + err.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleToggle = async (enabled: boolean) => {
+    try { const { config } = await api.updateSyncConfig({ isEnabled: enabled }); setSyncConfig(config); }
+    catch (err: any) { console.error('Toggle failed:', err); }
+  };
+
+  const handleSheetSelect = (s: Sheet) => { setSelectedSheetId(s.id); setSelectedSheetName(s.name); setColumnMapping({}); };
+  const handleCalSelect = (c: Calendar) => { setSelectedCalendarId(c.id!); setSelectedCalendarName(c.summary!); };
+  const refreshStatus = async () => { try { setSyncStatus(await api.getSyncStatus()); } catch {} };
+
+  if (loading) return (
+    <Layout authStatus={null}><div className="loading-screen"><div className="spinner spinner-lg" /><p>Loading dashboard...</p></div></Layout>
+  );
+
+  const both = authStatus?.google && authStatus?.smartsheet;
+  const canSave = selectedSheetId && selectedCalendarId && columnMapping.title && columnMapping.startDate;
+
+  return (
+    <Layout authStatus={authStatus}>
+      <section className="dashboard-section">
+        <h2 className="section-title"><span className="section-number">1</span>Connect Your Accounts</h2>
+        <div className="connections-grid">
+          <ConnectionCard provider="google" connected={authStatus?.google || false} label="Google Calendar"
+            description="Connect to create and manage calendar events" expiry={authStatus?.googleExpiry} />
+          <ConnectionCard provider="smartsheet" connected={authStatus?.smartsheet || false} label="Smartsheet"
+            description="Connect to read sheets and receive webhooks" expiry={authStatus?.smartsheetExpiry} />
+        </div>
+      </section>
+
+      {both && (
+        <section className="dashboard-section">
+          <h2 className="section-title"><span className="section-number">2</span>Configure Sync</h2>
+          <div className="config-grid">
+            <SheetSelector selectedSheetId={selectedSheetId} onSelect={handleSheetSelect} />
+            <CalendarSelector selectedCalendarId={selectedCalendarId} onSelect={handleCalSelect} />
+          </div>
+          <ColumnMapping sheetId={selectedSheetId} mapping={columnMapping} onChange={setColumnMapping} />
+          <div className="config-actions">
+            <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving || !canSave}>
+              {saving ? 'Saving...' : syncConfig ? 'Update Configuration' : 'Save Configuration'}
+            </button>
+            {saveMsg && <span className={'save-message ' + (saveMsg.startsWith('Error') ? 'error' : 'success')}>{saveMsg}</span>}
+            {!canSave && <span className="save-hint">Select a sheet, calendar, and map at least Title + Start Date</span>}
+          </div>
+        </section>
+      )}
+
+      {syncConfig && (
+        <section className="dashboard-section">
+          <h2 className="section-title"><span className="section-number">3</span>Synchronize</h2>
+          <SyncControls isEnabled={syncConfig.isEnabled} hasConfig={!!syncConfig} onToggleSync={handleToggle} onSyncComplete={refreshStatus} />
+        </section>
+      )}
+
+      {syncStatus && (
+        <section className="dashboard-section">
+          <h2 className="section-title"><span className="section-number">4</span>Sync Status</h2>
+          <SyncStats stats={syncStatus.stats} lastFullSyncAt={syncStatus.config?.lastFullSyncAt} />
+          <ErrorList records={syncStatus.failedRecords} onRetryComplete={refreshStatus} />
+        </section>
+      )}
+    </Layout>
+  );
+}

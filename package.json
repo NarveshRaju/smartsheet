@@ -1,0 +1,30 @@
+{
+  "name": "smartsheet-gcal-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-way Smartsheet to Google Calendar synchronization with real-time webhooks and React dashboard",
+  "scripts": {
+    "install:all": "npm install --prefix backend && npm install --prefix frontend",
+    "build": "npm run build --prefix backend && npm run build --prefix frontend",
+    "start": "npm run start --prefix backend",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "db:push": "npm run db:push --prefix backend",
+    "db:generate": "npm run db:generate --prefix backend",
+    "db:migrate": "npm run db:migrate --prefix backend"
+  },
+  "keywords": [
+    "smartsheet",
+    "google-calendar",
+    "sync",
+    "webhooks",
+    "oauth2",
+    "react",
+    "express"
+  ],
+  "author": "Narvesh Raju",
+  "license": "MIT",
+  "devDependencies": {
+    "isomorphic-git": "^1.41.5"
+  }
+}
