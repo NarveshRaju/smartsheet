@@ -1,6 +1,13 @@
 import type { AuthStatus, Sheet, Column, Calendar, SyncConfig, SyncStatus, SyncResult } from '../types/index.js';
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
+export const API_BASE_URL = import.meta.env.VITE_API_URL ?? (
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
+    ? ''
+    : 'https://smartsheet-gcal-sync.onrender.com'
+);
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const url = path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
   const response = await fetch(url, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...options?.headers },

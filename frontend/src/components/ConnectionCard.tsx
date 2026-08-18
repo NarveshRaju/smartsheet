@@ -1,10 +1,15 @@
+import { API_BASE_URL } from '../api/client.js';
+
 interface ConnectionCardProps {
   provider: 'google' | 'smartsheet'; connected: boolean; label: string;
   description: string; expiry?: string;
 }
 
 export default function ConnectionCard({ provider, connected, label, description, expiry }: ConnectionCardProps) {
-  const handleConnect = () => { window.location.href = '/auth/' + provider; };
+  const handleConnect = () => {
+    const base = API_BASE_URL || '';
+    window.location.href = `${base}/auth/${provider}`;
+  };
   return (
     <div className={'connection-card ' + (connected ? 'connected' : 'disconnected')}>
       <div className="connection-icon" data-provider={provider}>

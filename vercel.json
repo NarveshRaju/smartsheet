@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    {
+      "source": "/auth/:path*",
+      "destination": "https://smartsheet-gcal-sync.onrender.com/auth/:path*"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://smartsheet-gcal-sync.onrender.com/api/:path*"
+    },
+    {
+      "source": "/webhooks/:path*",
+      "destination": "https://smartsheet-gcal-sync.onrender.com/webhooks/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://smartsheet-gcal-sync.onrender.com/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
