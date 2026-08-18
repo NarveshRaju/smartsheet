@@ -12,6 +12,23 @@ interface ParsedDateTimeResult {
   dateOnly: string; // YYYY-MM-DD
   dateTime?: string; // ISO string
   hasTime: boolean;
+  isAllDay: boolean;
+}
+
+function isAllDayIndicator(val?: string): boolean {
+  if (!val) return false;
+  const lower = val.trim().toLowerCase();
+  return (
+    lower === 'all day' ||
+    lower === 'allday' ||
+    lower === 'all-day' ||
+    lower === 'all_day' ||
+    lower === 'all day event' ||
+    lower === 'full day' ||
+    lower === 'whole day' ||
+    lower === 'true' ||
+    lower === 'yes'
+  );
 }
 
 function parseSmartsheetDateTime(
@@ -25,13 +42,15 @@ function parseSmartsheetDateTime(
   const dStr = dateStr.trim();
   const tStr = timeStr ? timeStr.trim() : '';
 
+  const isAllDay = isAllDayIndicator(tStr) || isAllDayIndicator(dStr);
+
   // Check if dateStr itself already contains a time (e.g. 2026-08-18T10:00:00 or 2026-08-18 10:00 AM)
-  const dateHasTime = /\d{1,2}:\d{2}/.test(dStr);
-  const hasTime = dateHasTime || (tStr !== '' && /\d{1,2}:\d{2}/.test(tStr));
+  const dateHasTime = !isAllDay && /\d{1,2}:\d{2}/.test(dStr);
+  const hasTime = dateHasTime || (!isAllDay && tStr !== '' && /\d{1,2}:\d{2}/.test(tStr));
 
   // If time is provided separately and dateStr doesn't have time:
   let combinedStr = dStr;
-  if (!dateHasTime && tStr && /\d{1,2}:\d{2}/.test(tStr)) {
+  if (!dateHasTime && !isAllDay && tStr && /\d{1,2}:\d{2}/.test(tStr)) {
     combinedStr = `${dStr} ${tStr}`;
   }
 
@@ -59,7 +78,7 @@ function parseSmartsheetDateTime(
       let hour = defaultHour;
       let minute = defaultMinute;
 
-      const timeSource = tStr || (dateHasTime ? dStr : '');
+      const timeSource = !isAllDay ? (tStr || (dateHasTime ? dStr : '')) : '';
       if (timeSource) {
         const timeMatch = timeSource.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
         if (timeMatch) {
@@ -89,6 +108,7 @@ function parseSmartsheetDateTime(
     dateOnly,
     dateTime: parsed.toISOString(),
     hasTime,
+    isAllDay,
   };
 }
 
@@ -127,8 +147,8 @@ function mapRowToEventStandard(
     return null;
   }
 
-  // If start time and end time are blank (no time specified), do NOT update onto calendars
-  if (!startParsed.hasTime) {
+  // If start time is neither a specific time nor an all-day event, skip calendar sync
+  if (!startParsed.hasTime && !startParsed.isAllDay) {
     logger.debug(`Row ${row.id}: Start time and end time are blank, skipping calendar sync`);
     return null;
   }
@@ -142,19 +162,25 @@ function mapRowToEventStandard(
         dateTime: sDate.toISOString(),
         dateOnly: startParsed.dateOnly,
         hasTime: true,
+        isAllDay: false,
       };
     } else {
       endParsed = {
         dateOnly: startParsed.dateOnly,
         hasTime: false,
+        isAllDay: startParsed.isAllDay,
       };
     }
   }
 
   const event: CalendarEventData = {
     summary: title,
-    start: { dateTime: startParsed.dateTime!, timeZone: timezone },
-    end: { dateTime: endParsed.dateTime || startParsed.dateTime!, timeZone: timezone },
+    start: startParsed.isAllDay || !startParsed.hasTime
+      ? { date: startParsed.dateOnly, timeZone: timezone }
+      : { dateTime: startParsed.dateTime!, timeZone: timezone },
+    end: startParsed.isAllDay || !endParsed.hasTime
+      ? { date: endParsed.dateOnly || startParsed.dateOnly, timeZone: timezone }
+      : { dateTime: endParsed.dateTime || startParsed.dateTime!, timeZone: timezone },
   };
 
   const description = getCellValue(columnMapping.description);
@@ -213,11 +239,19 @@ async function mapRowToEvent(
 /**
  * Check if row data has changed compared to stored snapshot.
  */
+function extractRowSignature(row: any): string {
+  if (!row || !row.cells) return '';
+  const pairs: string[] = [];
+  for (const [colId, cell] of Object.entries<any>(row.cells)) {
+    const v = cell?.displayValue ?? cell?.value ?? '';
+    pairs.push(`${colId}:${v}`);
+  }
+  return pairs.sort().join('|');
+}
+
 function hasRowChanged(newRow: any, storedData: any): boolean {
   if (!storedData) return true;
-  const newCells = JSON.stringify(newRow.cells);
-  const oldCells = JSON.stringify(storedData.cells);
-  return newCells !== oldCells;
+  return extractRowSignature(newRow) !== extractRowSignature(storedData);
 }
 
 /**
@@ -253,6 +287,13 @@ export async function fullSync(configId: string): Promise<SyncResult> {
     for (const row of rows) {
       const rowId = row.id.toString();
       const existingRecord = recordMap.get(rowId);
+
+      // ⚡ EFFICIENCY OPTIMIZATION:
+      // If record is already synced and row has not changed at all, SKIP COMPLETELY!
+      // Do NOT call Groq LLM or Google Calendar API for untouched rows!
+      if (existingRecord && existingRecord.syncStatus === 'synced' && !hasRowChanged(row, existingRecord.rowData)) {
+        continue;
+      }
 
       try {
         const eventData = await mapRowToEvent(row, columnMapping, timezone);
@@ -299,7 +340,7 @@ export async function fullSync(configId: string): Promise<SyncResult> {
             },
           });
           result.created++;
-        } else if (hasRowChanged(row, existingRecord.rowData)) {
+        } else if (hasRowChanged(row, existingRecord.rowData) || existingRecord.syncStatus !== 'synced') {
           // UPDATE: Row changed, update calendar event
           if (existingRecord.googleEventId) {
             await googleService.updateEvent(
@@ -309,29 +350,17 @@ export async function fullSync(configId: string): Promise<SyncResult> {
               eventData
             );
           } else {
-            // Edge case: record exists but no event ID (previous create failed?)
             const eventId = await googleService.createEvent(
               userId,
               config.googleCalendarId,
               eventData
             );
-            await prisma.syncRecord.update({
-              where: { id: existingRecord.id },
-              data: {
-                googleEventId: eventId,
-                syncStatus: 'synced',
-                syncAction: 'create',
-                lastSyncedAt: new Date(),
-                lastError: null,
-                rowData: row,
-              },
-            });
-            result.created++;
-            continue;
+            existingRecord.googleEventId = eventId;
           }
           await prisma.syncRecord.update({
             where: { id: existingRecord.id },
             data: {
+              googleEventId: existingRecord.googleEventId,
               syncStatus: 'synced',
               syncAction: 'update',
               lastSyncedAt: new Date(),
@@ -475,6 +504,12 @@ export async function syncRow(
           data: { syncStatus: 'deleted', syncAction: 'delete', lastSyncedAt: new Date(), lastError: null },
         });
       }
+      return;
+    }
+
+    // ⚡ If row hasn't changed from stored snapshot, skip calling LLM/Google Calendar
+    if (existingRecord && existingRecord.syncStatus === 'synced' && !hasRowChanged(row, existingRecord.rowData)) {
+      logger.debug(`Row ${rowId}: No changes detected in cells, skipping`);
       return;
     }
 

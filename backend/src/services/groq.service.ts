@@ -113,25 +113,29 @@ export async function curateEventWithGroq(
     const systemPrompt = `You are an expert AI assistant that curates structured Google Calendar events from tabular project data (Smartsheet).
 Analyze the provided row data, column mappings, and timezone to output a structured JSON Google Calendar event object.
 
-CRITICAL RULE:
-If the row does NOT contain a valid date AND a valid time (i.e. start date is blank/missing, or start time and end time are blank/missing), you MUST output:
-{ "skip": true }
+RULES:
+1. ALL-DAY EVENTS: If start time is "all day", "all-day", "full day", "yes", or explicitly marked all day, format "start" and "end" using "date" ONLY:
+   - "start": { "date": "YYYY-MM-DD", "timeZone": "${timezone}" }
+   - "end": { "date": "YYYY-MM-DD", "timeZone": "${timezone}" }
+2. TIMED EVENTS: If a specific time is provided (e.g. 10:00 AM, 14:30), format "start" and "end" using "dateTime" ISO 8601:
+   - "start": { "dateTime": "YYYY-MM-DDTHH:mm:ss", "timeZone": "${timezone}" }
+   - "end": { "dateTime": "YYYY-MM-DDTHH:mm:ss", "timeZone": "${timezone}" }
+3. SKIPPING: If start time is blank/empty AND is NOT an all-day event, you MUST output:
+   { "skip": true }
 
-Requirements when date and time are both present:
+Requirements when event is created:
 1. "summary": Concise, clear, and professional event title.
-2. "start": An object with "dateTime" (ISO 8601 string with time e.g. "2026-08-18T10:00:00") and "timeZone": "${timezone}".
-3. "end": An object with "dateTime" (ISO 8601 string with time e.g. "2026-08-18T11:00:00") and "timeZone": "${timezone}". Default duration is 1 hour if start time is provided but no end time is specified.
-4. "description": Clean, nicely formatted multi-line summary of key notes, row context, links, and details from the row.
-5. "location": Physical location, conference room, or video meeting link (Zoom/Google Meet/Teams) if present in the row.
-6. "attendees": Array of valid email objects e.g. [{"email": "user@example.com"}].
-7. "status": "confirmed", "tentative", or "cancelled".
+2. "description": Clean, nicely formatted multi-line summary of key notes, row context, links, and details from the row.
+3. "location": Physical location, conference room, or video meeting link (Zoom/Google Meet/Teams) if present in the row.
+4. "attendees": Array of valid email objects e.g. [{"email": "user@example.com"}].
+5. "status": "confirmed", "tentative", or "cancelled".
 
 Respond strictly with valid JSON conforming to this schema:
 {
   "skip"?: boolean,
   "summary"?: string,
-  "start"?: { "dateTime": string, "timeZone": string },
-  "end"?: { "dateTime": string, "timeZone": string },
+  "start"?: { "dateTime"?: string, "date"?: string, "timeZone": string },
+  "end"?: { "dateTime"?: string, "date"?: string, "timeZone": string },
   "description"?: string,
   "location"?: string,
   "attendees"?: [{"email": string}],
@@ -165,8 +169,11 @@ Respond strictly with valid JSON conforming to this schema:
 
     const parsed = JSON.parse(content);
 
-    if (parsed.skip || !parsed.start?.dateTime || !parsed.end?.dateTime || !parsed.summary) {
-      logger.debug(`Row ${row.id}: Groq determined start/end time is blank or row should be skipped`);
+    const hasStart = Boolean(parsed.start?.dateTime || parsed.start?.date);
+    const hasEnd = Boolean(parsed.end?.dateTime || parsed.end?.date);
+
+    if (parsed.skip || !hasStart || !hasEnd || !parsed.summary) {
+      logger.debug(`Row ${row.id}: Groq determined row is blank or should be skipped`);
       return null;
     }
 
