@@ -7,16 +7,15 @@ let groqClient: Groq | null = null;
 let cachedActiveModel: string | null = null;
 
 const PREFERRED_MODELS = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-70b-versatile',
   'llama-3.1-8b-instant',
-  'llama-3.2-11b-vision-preview',
-  'llama-3.2-3b-preview',
-  'llama-3.2-1b-preview',
+  'llama-3.3-70b-versatile',
+  'llama3-8b-8192',
+  'llama3-70b-8192',
   'mixtral-8x7b-32768',
   'gemma2-9b-it',
+  'llama-3.2-3b-preview',
+  'llama-3.2-1b-preview',
   'qwen-2.5-32b',
-  'deepseek-r1-distill-llama-70b',
 ];
 
 function getGroqClient(): Groq | null {
@@ -46,10 +45,13 @@ async function resolveGroqModel(client: Groq): Promise<string> {
     logger.info(`📋 Groq available models on this key: ${availableModelIds.join(', ')}`);
 
     for (const candidate of PREFERRED_MODELS) {
-      if (availableModelIds.includes(candidate)) {
-        cachedActiveModel = candidate;
-        logger.info(`🎯 Selected Groq model: ${candidate}`);
-        return candidate;
+      const found = availableModelIds.find(
+        (id) => id === candidate || id.endsWith(`/${candidate}`) || id.includes(candidate)
+      );
+      if (found) {
+        cachedActiveModel = found;
+        logger.info(`🎯 Selected Groq model: ${found}`);
+        return found;
       }
     }
 
@@ -177,11 +179,28 @@ Respond strictly with valid JSON conforming to this schema:
       return null;
     }
 
+    // Ensure format consistency: start and end MUST both be date OR both be dateTime
+    if (parsed.start?.dateTime && !parsed.end?.dateTime) {
+      if (parsed.end?.date) {
+        parsed.end = { dateTime: `${parsed.end.date}T10:00:00`, timeZone: timezone };
+      } else {
+        const sDate = new Date(parsed.start.dateTime);
+        sDate.setHours(sDate.getHours() + 1);
+        parsed.end = { dateTime: sDate.toISOString(), timeZone: timezone };
+      }
+    } else if (parsed.start?.date && !parsed.end?.date) {
+      parsed.end = { date: parsed.start.date, timeZone: timezone };
+    }
+
     logger.info(`✨ Groq (${modelToUse}) successfully curated event: "${parsed.summary}"`);
     return parsed as CalendarEventData;
   } catch (error: any) {
-    const errorDetails = error?.response?.data ? JSON.stringify(error.response.data) : error.message;
-    logger.warn(`Groq event curation failed for row ${row.id}: ${errorDetails}. Falling back to standard parser.`);
+    if (error?.status === 429 || error?.message?.includes('429')) {
+      logger.warn(`Groq rate limit (429) reached for row ${row.id}. Gracefully falling back to standard parser.`);
+    } else {
+      const errorDetails = error?.response?.data ? JSON.stringify(error.response.data) : error.message;
+      logger.warn(`Groq event curation failed for row ${row.id}: ${errorDetails}. Falling back to standard parser.`);
+    }
     return null;
   }
 }

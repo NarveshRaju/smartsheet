@@ -154,34 +154,33 @@ function mapRowToEventStandard(
   }
 
   let endParsed = parseSmartsheetDateTime(endDateStr || startDateStr, endTimeStr, 10, 0);
-  if (!endParsed || (!endDateStr && !endTimeStr && startParsed.hasTime)) {
-    if (startParsed.hasTime && startParsed.dateTime) {
-      const sDate = new Date(startParsed.dateTime);
-      sDate.setHours(sDate.getHours() + 1);
-      endParsed = {
-        dateTime: sDate.toISOString(),
-        dateOnly: startParsed.dateOnly,
-        hasTime: true,
-        isAllDay: false,
-      };
-    } else {
-      endParsed = {
-        dateOnly: startParsed.dateOnly,
-        hasTime: false,
-        isAllDay: startParsed.isAllDay,
-      };
-    }
-  }
 
-  const event: CalendarEventData = {
-    summary: title,
-    start: startParsed.isAllDay || !startParsed.hasTime
-      ? { date: startParsed.dateOnly, timeZone: timezone }
-      : { dateTime: startParsed.dateTime!, timeZone: timezone },
-    end: startParsed.isAllDay || !endParsed.hasTime
-      ? { date: endParsed.dateOnly || startParsed.dateOnly, timeZone: timezone }
-      : { dateTime: endParsed.dateTime || startParsed.dateTime!, timeZone: timezone },
-  };
+  let event: CalendarEventData;
+
+  if (startParsed.isAllDay) {
+    // All-day event: both start and end MUST be date-only for Google Calendar
+    const endDateOnly = endParsed?.dateOnly || startParsed.dateOnly;
+    event = {
+      summary: title,
+      start: { date: startParsed.dateOnly, timeZone: timezone },
+      end: { date: endDateOnly, timeZone: timezone },
+    };
+  } else {
+    // Timed event: both start and end MUST be dateTime for Google Calendar
+    let endDateTime = endParsed?.hasTime && endParsed?.dateTime ? endParsed.dateTime : undefined;
+    if (!endDateTime) {
+      // Default to 1 hour after start if no end time is specified
+      const sDate = new Date(startParsed.dateTime!);
+      sDate.setHours(sDate.getHours() + 1);
+      endDateTime = sDate.toISOString();
+    }
+
+    event = {
+      summary: title,
+      start: { dateTime: startParsed.dateTime!, timeZone: timezone },
+      end: { dateTime: endDateTime, timeZone: timezone },
+    };
+  }
 
   const description = getCellValue(columnMapping.description);
   if (description) event.description = description;
