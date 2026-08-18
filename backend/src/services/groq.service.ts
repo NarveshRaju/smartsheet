@@ -7,15 +7,16 @@ let groqClient: Groq | null = null;
 let cachedActiveModel: string | null = null;
 
 const PREFERRED_MODELS = [
+  'qwen/qwen3.6-27b',
+  'qwen3.6-27b',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'groq/compound-mini',
+  'groq/compound',
   'llama-3.1-8b-instant',
   'llama-3.3-70b-versatile',
   'llama3-8b-8192',
-  'llama3-70b-8192',
-  'mixtral-8x7b-32768',
-  'gemma2-9b-it',
-  'llama-3.2-3b-preview',
-  'llama-3.2-1b-preview',
-  'qwen-2.5-32b',
+  'allam-2-7b',
 ];
 
 function getGroqClient(): Groq | null {
@@ -55,9 +56,14 @@ async function resolveGroqModel(client: Groq): Promise<string> {
       }
     }
 
-    // Pick first available text/chat model (exclude whisper/guard/audio)
+    // Pick first available text/chat model (exclude whisper, guard, safeguard, canopylabs/orpheus)
     const fallbackTextModel = availableModelIds.find(
-      (id) => !id.includes('whisper') && !id.includes('guard')
+      (id) =>
+        !id.includes('whisper') &&
+        !id.includes('guard') &&
+        !id.includes('safeguard') &&
+        !id.includes('canopylabs') &&
+        !id.includes('orpheus')
     );
     if (fallbackTextModel) {
       cachedActiveModel = fallbackTextModel;
@@ -65,10 +71,10 @@ async function resolveGroqModel(client: Groq): Promise<string> {
       return fallbackTextModel;
     }
   } catch (err: any) {
-    logger.warn(`Could not list Groq models: ${err.message}. Defaulting to llama-3.1-8b-instant`);
+    logger.warn(`Could not list Groq models: ${err.message}. Defaulting to qwen/qwen3.6-27b`);
   }
 
-  return 'llama-3.1-8b-instant';
+  return 'qwen/qwen3.6-27b';
 }
 
 /**
