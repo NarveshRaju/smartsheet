@@ -4,6 +4,20 @@ import { logger } from '../utils/logger.js';
 import type { CalendarEventData, ColumnMapping } from '../types/index.js';
 
 let groqClient: Groq | null = null;
+let cachedActiveModel: string | null = null;
+
+const PREFERRED_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-70b-versatile',
+  'llama-3.1-8b-instant',
+  'llama-3.2-11b-vision-preview',
+  'llama-3.2-3b-preview',
+  'llama-3.2-1b-preview',
+  'mixtral-8x7b-32768',
+  'gemma2-9b-it',
+  'qwen-2.5-32b',
+  'deepseek-r1-distill-llama-70b',
+];
 
 function getGroqClient(): Groq | null {
   const rawKey = env.GROQ_API_KEY ? env.GROQ_API_KEY.trim().replace(/^['"]|['"]$/g, '') : '';
@@ -16,6 +30,43 @@ function getGroqClient(): Groq | null {
 
 export function isGroqConfigured(): boolean {
   return Boolean(env.GROQ_API_KEY && env.GROQ_API_KEY.trim().length > 0);
+}
+
+/**
+ * Dynamically resolves the best active model available on the user's Groq account.
+ */
+async function resolveGroqModel(client: Groq): Promise<string> {
+  if (cachedActiveModel) {
+    return cachedActiveModel;
+  }
+
+  try {
+    const list = await client.models.list();
+    const availableModelIds = list.data.map((m) => m.id);
+    logger.info(`📋 Groq available models on this key: ${availableModelIds.join(', ')}`);
+
+    for (const candidate of PREFERRED_MODELS) {
+      if (availableModelIds.includes(candidate)) {
+        cachedActiveModel = candidate;
+        logger.info(`🎯 Selected Groq model: ${candidate}`);
+        return candidate;
+      }
+    }
+
+    // Pick first available text/chat model (exclude whisper/guard/audio)
+    const fallbackTextModel = availableModelIds.find(
+      (id) => !id.includes('whisper') && !id.includes('guard')
+    );
+    if (fallbackTextModel) {
+      cachedActiveModel = fallbackTextModel;
+      logger.info(`🎯 Selected Groq fallback model: ${fallbackTextModel}`);
+      return fallbackTextModel;
+    }
+  } catch (err: any) {
+    logger.warn(`Could not list Groq models: ${err.message}. Defaulting to llama-3.1-8b-instant`);
+  }
+
+  return 'llama-3.1-8b-instant';
 }
 
 /**
@@ -79,8 +130,10 @@ Respond strictly with valid JSON conforming to this schema:
       currentDate: new Date().toISOString().split('T')[0],
     });
 
+    const modelToUse = await resolveGroqModel(client);
+
     const completion = await client.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: modelToUse,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -102,7 +155,7 @@ Respond strictly with valid JSON conforming to this schema:
       return null;
     }
 
-    logger.info(`✨ Groq successfully curated event: "${parsed.summary}"`);
+    logger.info(`✨ Groq (${modelToUse}) successfully curated event: "${parsed.summary}"`);
     return parsed as CalendarEventData;
   } catch (error: any) {
     const errorDetails = error?.response?.data ? JSON.stringify(error.response.data) : error.message;
