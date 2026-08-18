@@ -136,8 +136,18 @@ function mapRowToEventStandard(
   const endDateStr = getCellValue(columnMapping.endDate);
   const endTimeStr = getCellValue(columnMapping.endTime);
 
+  // 1. Start Date is strictly mandatory
   if (!startDateStr || !startDateStr.trim()) {
-    logger.debug(`Row ${row.id}: No start date mentioned or date is blank, skipping calendar sync`);
+    logger.debug(`Row ${row.id}: Start date is blank (both date and time are mandatory), skipping calendar sync`);
+    return null;
+  }
+
+  // 2. Start Time is strictly mandatory (must have explicit non-empty time or embedded time/all-day)
+  const hasExplicitStartTime = Boolean(startTimeStr && startTimeStr.trim().length > 0);
+  const dateHasEmbeddedTime = /\d{1,2}:\d{2}/.test(startDateStr.trim()) || isAllDayIndicator(startDateStr.trim());
+
+  if (!hasExplicitStartTime && !dateHasEmbeddedTime) {
+    logger.debug(`Row ${row.id}: Start time is blank (both start date and start time are mandatory), skipping calendar sync`);
     return null;
   }
 
@@ -149,7 +159,7 @@ function mapRowToEventStandard(
 
   // If start time is neither a specific time nor an all-day event, skip calendar sync
   if (!startParsed.hasTime && !startParsed.isAllDay) {
-    logger.debug(`Row ${row.id}: Start time and end time are blank, skipping calendar sync`);
+    logger.debug(`Row ${row.id}: Start time is blank or invalid, skipping calendar sync`);
     return null;
   }
 

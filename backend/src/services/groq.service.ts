@@ -102,13 +102,20 @@ export async function curateEventWithGroq(
       return null;
     }
 
-    // Fast-check: if start date is blank, immediately skip without LLM call
+    // Fast-check: both start date AND start time are strictly mandatory
     const startDateVal = columnMapping.startDate && row.cells?.[columnMapping.startDate]
       ? (row.cells[columnMapping.startDate].displayValue || row.cells[columnMapping.startDate].value?.toString() || '').trim()
       : '';
 
-    if (!startDateVal) {
-      logger.debug(`Row ${row.id}: Start date is blank, skipping calendar sync`);
+    const startTimeVal = columnMapping.startTime && row.cells?.[columnMapping.startTime]
+      ? (row.cells[columnMapping.startTime].displayValue || row.cells[columnMapping.startTime].value?.toString() || '').trim()
+      : '';
+
+    const isAllDay = (val: string) => /^(all\s*day|full\s*day|yes|true)/i.test(val.trim());
+    const dateHasEmbeddedTime = /\d{1,2}:\d{2}/.test(startDateVal) || isAllDay(startDateVal);
+
+    if (!startDateVal || (!startTimeVal && !dateHasEmbeddedTime)) {
+      logger.debug(`Row ${row.id}: Start date or start time is blank (both are mandatory), skipping calendar sync`);
       return null;
     }
 

@@ -6,10 +6,10 @@ interface Props { sheetId?: string; mapping: CMType; onChange: (m: CMType) => vo
 
 const FIELDS = [
   { key: 'title', label: 'Event Title / Summary', icon: '📝', required: true, desc: 'Name of the event' },
-  { key: 'startDate', label: 'Start Date (or Date & Time)', icon: '📅', required: true, desc: 'Date (or combined DateTime) column' },
-  { key: 'startTime', label: 'Start Time (Optional)', icon: '🕐', required: false, desc: 'Separate time column (e.g. 10:00 AM)' },
-  { key: 'endDate', label: 'End Date', icon: '📅', required: false, desc: 'End date column (optional)' },
-  { key: 'endTime', label: 'End Time (Optional)', icon: '🕑', required: false, desc: 'Separate end time column (e.g. 11:30 AM)' },
+  { key: 'startDate', label: 'Start Date', icon: '📅', required: true, desc: 'Mandatory date column (e.g. 2026-08-18)' },
+  { key: 'startTime', label: 'Start Time', icon: '🕐', required: false, desc: 'Mandatory time column (e.g. 10:00 AM or All Day)' },
+  { key: 'endDate', label: 'End Date', icon: '📅', required: false, desc: 'Optional end date column' },
+  { key: 'endTime', label: 'End Time', icon: '🕑', required: false, desc: 'Optional end time column (e.g. 11:30 AM)' },
   { key: 'description', label: 'Description / Notes', icon: '📄', required: false, desc: 'Event details / body text' },
   { key: 'location', label: 'Location / Link', icon: '📍', required: false, desc: 'Event location or meeting link' },
   { key: 'attendee', label: 'Attendees (Emails)', icon: '👥', required: false, desc: 'Comma-separated guest emails' },
