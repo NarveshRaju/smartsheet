@@ -25,6 +25,7 @@
     "express-rate-limit": "^7.5.0",
     "express-session": "^1.18.1",
     "googleapis": "^144.0.0",
+    "groq-sdk": "^1.5.0",
     "helmet": "^8.0.0",
     "prisma": "^6.9.0",
     "tsx": "^4.19.2",

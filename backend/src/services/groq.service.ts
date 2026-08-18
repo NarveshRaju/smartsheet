@@ -1,10 +1,18 @@
-import axios from 'axios';
+import Groq from 'groq-sdk';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { CalendarEventData, ColumnMapping } from '../types/index.js';
 
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+let groqClient: Groq | null = null;
+
+function getGroqClient(): Groq | null {
+  const rawKey = env.GROQ_API_KEY ? env.GROQ_API_KEY.trim().replace(/^['"]|['"]$/g, '') : '';
+  if (!rawKey) return null;
+  if (!groqClient) {
+    groqClient = new Groq({ apiKey: rawKey });
+  }
+  return groqClient;
+}
 
 export function isGroqConfigured(): boolean {
   return Boolean(env.GROQ_API_KEY && env.GROQ_API_KEY.trim().length > 0);
@@ -19,7 +27,8 @@ export async function curateEventWithGroq(
   columnMapping: ColumnMapping,
   timezone: string
 ): Promise<CalendarEventData | null> {
-  if (!isGroqConfigured()) {
+  const client = getGroqClient();
+  if (!client) {
     return null;
   }
 
@@ -41,7 +50,7 @@ export async function curateEventWithGroq(
     }
 
     const systemPrompt = `You are an expert AI assistant that curates structured Google Calendar events from tabular project data (Smartsheet).
-Analyze the provided row data, column mappings, and timezone to output a perfectly structured JSON Google Calendar event object.
+Analyze the provided row data, column mappings, and timezone to output a structured JSON Google Calendar event object.
 
 Requirements:
 1. "summary": Concise, clear, and professional event title.
@@ -70,27 +79,17 @@ Respond strictly with valid JSON conforming to this schema:
       currentDate: new Date().toISOString().split('T')[0],
     });
 
-    const response = await axios.post(
-      GROQ_API_URL,
-      {
-        model: GROQ_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${env.GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 8000,
-      }
-    );
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.1,
+    });
 
-    const content = response.data?.choices?.[0]?.message?.content;
+    const content = completion.choices[0]?.message?.content;
     if (!content) {
       logger.warn(`Groq returned empty response for row ${row.id}`);
       return null;
@@ -106,7 +105,8 @@ Respond strictly with valid JSON conforming to this schema:
     logger.info(`✨ Groq successfully curated event: "${parsed.summary}"`);
     return parsed as CalendarEventData;
   } catch (error: any) {
-    logger.warn(`Groq event curation failed for row ${row.id}: ${error.message}. Falling back to standard parser.`);
+    const errorDetails = error?.response?.data ? JSON.stringify(error.response.data) : error.message;
+    logger.warn(`Groq event curation failed for row ${row.id}: ${errorDetails}. Falling back to standard parser.`);
     return null;
   }
 }
