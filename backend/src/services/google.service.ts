@@ -147,6 +147,22 @@ export async function createCalendar(
   });
 }
 
+export async function getCalendarTimezone(userId: string, calendarId: string): Promise<string> {
+  try {
+    const auth = await getAuthenticatedClient(userId);
+    const calendar = google.calendar({ version: 'v3', auth });
+    const targetCalendarId = await getSafeCalendarId(calendar, calendarId);
+
+    const cal = await calendar.calendars.get({ calendarId: targetCalendarId });
+    if (cal.data.timeZone) {
+      return cal.data.timeZone;
+    }
+  } catch (err: any) {
+    logger.warn(`Could not fetch timezone for calendar ${calendarId}: ${err.message}`);
+  }
+  return env.DEFAULT_TIMEZONE || 'UTC';
+}
+
 /**
  * Safely resolves a calendar ID for Google Calendar API calls.
  * - Handles primary calendar aliases ('primary')

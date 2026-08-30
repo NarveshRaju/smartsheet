@@ -31,6 +31,68 @@ function isAllDayIndicator(val?: string): boolean {
   );
 }
 
+function parseDateComponents(dStr: string): { year: number; month: number; day: number } | null {
+  if (!dStr || !dStr.trim()) return null;
+  const s = dStr.trim();
+
+  // 1. ISO: YYYY-MM-DD or YYYY/MM/DD
+  const isoMatch = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (year >= 1900 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return { year, month, day };
+    }
+  }
+
+  // 2. US: MM/DD/YYYY or M/D/YYYY
+  const usMatch = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+  if (usMatch) {
+    const first = parseInt(usMatch[1], 10);
+    const second = parseInt(usMatch[2], 10);
+    const year = parseInt(usMatch[3], 10);
+
+    if (first > 12) {
+      return { year, month: second, day: first };
+    }
+    return { year, month: first, day: second };
+  }
+
+  // 3. Fallback standard date parse
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return {
+      year: d.getFullYear(),
+      month: d.getMonth() + 1,
+      day: d.getDate(),
+    };
+  }
+
+  return null;
+}
+
+function parseTimeComponents(tStr: string): { hour: number; minute: number; second: number } | null {
+  if (!tStr || !tStr.trim()) return null;
+  const s = tStr.trim();
+
+  // Match: "10:30:00 AM", "10:30 PM", "10:30am", "14:30", "9 AM", "9pm", "9:00"
+  const match = s.match(/(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?/i);
+  if (!match) return null;
+
+  let hour = parseInt(match[1], 10);
+  const minute = match[2] ? parseInt(match[2], 10) : 0;
+  const second = match[3] ? parseInt(match[3], 10) : 0;
+  const ampm = match[4]?.toLowerCase();
+
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+  return { hour, minute, second };
+}
+
 function parseSmartsheetDateTime(
   dateStr?: string,
   timeStr?: string,
@@ -44,71 +106,52 @@ function parseSmartsheetDateTime(
 
   const isAllDay = isAllDayIndicator(tStr) || isAllDayIndicator(dStr);
 
-  // Check if dateStr itself already contains a time (e.g. 2026-08-18T10:00:00 or 2026-08-18 10:00 AM)
-  const dateHasTime = !isAllDay && /\d{1,2}:\d{2}/.test(dStr);
-  const hasTime = dateHasTime || (!isAllDay && tStr !== '' && /\d{1,2}:\d{2}/.test(tStr));
-
-  // If time is provided separately and dateStr doesn't have time:
-  let combinedStr = dStr;
-  if (!dateHasTime && !isAllDay && tStr && /\d{1,2}:\d{2}/.test(tStr)) {
-    combinedStr = `${dStr} ${tStr}`;
-  }
-
-  // Try standard Date parse
-  let parsed = new Date(combinedStr);
-
-  // If invalid, attempt manual component extraction
-  if (isNaN(parsed.getTime())) {
-    const dateMatch =
-      dStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/) ||
-      dStr.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
-
-    if (dateMatch) {
-      let year = 0, month = 0, day = 0;
-      if (dateMatch[1].length === 4) {
-        year = parseInt(dateMatch[1], 10);
-        month = parseInt(dateMatch[2], 10) - 1;
-        day = parseInt(dateMatch[3], 10);
-      } else {
-        year = parseInt(dateMatch[3], 10);
-        month = parseInt(dateMatch[1], 10) - 1;
-        day = parseInt(dateMatch[2], 10);
-      }
-
-      let hour = defaultHour;
-      let minute = defaultMinute;
-
-      const timeSource = !isAllDay ? (tStr || (dateHasTime ? dStr : '')) : '';
-      if (timeSource) {
-        const timeMatch = timeSource.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
-        if (timeMatch) {
-          hour = parseInt(timeMatch[1], 10);
-          minute = parseInt(timeMatch[2], 10);
-          const ampm = timeMatch[4]?.toLowerCase();
-          if (ampm === 'pm' && hour < 12) hour += 12;
-          if (ampm === 'am' && hour === 12) hour = 0;
-        }
-      }
-
-      parsed = new Date(year, month, day, hour, minute);
-    }
-  }
-
-  if (isNaN(parsed.getTime())) {
-    logger.warn(`Could not parse date/time from date: "${dateStr}", time: "${timeStr}"`);
+  const dateComponents = parseDateComponents(dStr);
+  if (!dateComponents) {
+    logger.warn(`Could not parse date components from "${dateStr}"`);
     return null;
   }
 
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, '0');
-  const d = String(parsed.getDate()).padStart(2, '0');
+  const { year, month, day } = dateComponents;
+  const y = String(year).padStart(4, '0');
+  const m = String(month).padStart(2, '0');
+  const d = String(day).padStart(2, '0');
   const dateOnly = `${y}-${m}-${d}`;
+
+  if (isAllDay) {
+    return {
+      dateOnly,
+      hasTime: false,
+      isAllDay: true,
+    };
+  }
+
+  // Extract time from timeStr or embedded in dateStr
+  let timeComponents = parseTimeComponents(tStr);
+  if (!timeComponents) {
+    const embeddedMatch = dStr.match(/(?:T|\s+)(\d{1,2}(?::\d{2})?(?::\d{2})?\s*(?:am|pm)?)/i);
+    if (embeddedMatch) {
+      timeComponents = parseTimeComponents(embeddedMatch[1]);
+    }
+  }
+
+  const hasTime = Boolean(timeComponents);
+  const hour = timeComponents ? timeComponents.hour : defaultHour;
+  const minute = timeComponents ? timeComponents.minute : defaultMinute;
+  const second = timeComponents ? timeComponents.second : 0;
+
+  const hStr = String(hour).padStart(2, '0');
+  const minStr = String(minute).padStart(2, '0');
+  const secStr = String(second).padStart(2, '0');
+
+  // Format as floating ISO 8601 string without Z (anchored to calendar timeZone)
+  const dateTime = `${dateOnly}T${hStr}:${minStr}:${secStr}`;
 
   return {
     dateOnly,
-    dateTime: parsed.toISOString(),
+    dateTime,
     hasTime,
-    isAllDay,
+    isAllDay: false,
   };
 }
 
@@ -120,6 +163,11 @@ function addDaysToDateString(dateStr: string, days: number): string {
   const nextM = String(date.getUTCMonth() + 1).padStart(2, '0');
   const nextD = String(date.getUTCDate()).padStart(2, '0');
   return `${nextY}-${nextM}-${nextD}`;
+}
+
+function stripZFromDateTime(dt?: string): string | undefined {
+  if (!dt) return undefined;
+  return dt.replace(/\.\d{3}Z$/i, '').replace(/Z$/i, '');
 }
 
 function sanitizeCalendarEventRange(event: CalendarEventData, timezone: string): CalendarEventData {
@@ -135,21 +183,36 @@ function sanitizeCalendarEventRange(event: CalendarEventData, timezone: string):
       end: { date: endDate, timeZone: timezone },
     };
   } else if (event.start.dateTime) {
-    // Timed event: end.dateTime must be strictly after start.dateTime
-    const startTime = new Date(event.start.dateTime).getTime();
-    let endDateTime = event.end.dateTime;
-    let endTime = endDateTime ? new Date(endDateTime).getTime() : NaN;
+    // Timed event: clean wall-clock datetime string
+    let cleanStart = stripZFromDateTime(event.start.dateTime)!;
+    let cleanEnd = stripZFromDateTime(event.end.dateTime);
 
-    if (isNaN(endTime) || endTime <= startTime) {
-      const sDate = new Date(event.start.dateTime);
-      sDate.setHours(sDate.getHours() + 1);
-      endDateTime = sDate.toISOString();
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(cleanStart)) {
+      cleanStart = `${cleanStart}:00`;
+    }
+
+    if (!cleanEnd || cleanEnd <= cleanStart) {
+      const [datePart, timePart] = cleanStart.split('T');
+      if (timePart) {
+        const [h, min, s] = timePart.split(':').map(Number);
+        let endH = (h || 0) + 1;
+        let endDatePart = datePart;
+        if (endH >= 24) {
+          endH -= 24;
+          endDatePart = addDaysToDateString(datePart, 1);
+        }
+        cleanEnd = `${endDatePart}T${String(endH).padStart(2, '0')}:${String(min || 0).padStart(2, '0')}:${String(s || 0).padStart(2, '0')}`;
+      } else {
+        cleanEnd = `${cleanStart}`;
+      }
+    } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(cleanEnd)) {
+      cleanEnd = `${cleanEnd}:00`;
     }
 
     return {
       ...event,
-      start: { dateTime: event.start.dateTime, timeZone: timezone },
-      end: { dateTime: endDateTime!, timeZone: timezone },
+      start: { dateTime: cleanStart, timeZone: timezone },
+      end: { dateTime: cleanEnd, timeZone: timezone },
     };
   }
   return event;
@@ -369,10 +432,10 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
 
   const userId = config.userId;
   const columnMapping = config.columnMapping as ColumnMapping;
-  const timezone = env.DEFAULT_TIMEZONE;
+  const timezone = await googleService.getCalendarTimezone(userId, config.googleCalendarId);
   const result: SyncResult = { created: 0, updated: 0, deleted: 0, failed: 0, errors: [] };
 
-  logger.info(`Starting full sync for config ${configId} on calendar ${config.googleCalendarId}`);
+  logger.info(`Starting full sync for config ${configId} on calendar ${config.googleCalendarId} (Timezone: ${timezone})`);
 
   try {
     // Fetch all rows from Smartsheet
@@ -668,7 +731,7 @@ export async function syncRow(
 
   const userId = config.userId;
   const columnMapping = config.columnMapping as ColumnMapping;
-  const timezone = env.DEFAULT_TIMEZONE;
+  const timezone = await googleService.getCalendarTimezone(userId, config.googleCalendarId);
 
   const existingRecord = await prisma.syncRecord.findUnique({
     where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
