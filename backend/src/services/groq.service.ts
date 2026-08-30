@@ -5,16 +5,18 @@ import type { CalendarEventData, ColumnMapping } from '../types/index.js';
 
 let groqClient: Groq | null = null;
 let cachedActiveModel: string | null = null;
+const modelCooldowns = new Map<string, number>();
 
 const PREFERRED_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
-  'qwen/qwen3.6-27b',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
+  'qwen/qwen3.8-27b',
+  'qwen/qwen3.6-27b',
   'allam-2-7b',
-  'groq/compound-mini',
   'groq/compound',
+  'groq/compound-mini',
 ];
 
 function getGroqClient(): Groq | null {
@@ -96,25 +98,32 @@ function extractJsonFromText(rawText: string): any {
 }
 
 /**
- * Dynamically resolves the best active model available on the user's Groq account.
+ * Dynamically resolves the best active model available on the user's Groq account,
+ * skipping any models currently on 429 rate limit cooldown.
  */
-async function resolveGroqModel(client: Groq): Promise<string> {
-  if (cachedActiveModel) {
-    return cachedActiveModel;
+async function resolveGroqModel(client: Groq, excludedModels: Set<string> = new Set()): Promise<string> {
+  const now = Date.now();
+
+  if (cachedActiveModel && !excludedModels.has(cachedActiveModel)) {
+    const cooldownUntil = modelCooldowns.get(cachedActiveModel) || 0;
+    if (cooldownUntil < now) {
+      return cachedActiveModel;
+    }
   }
 
   try {
     const list = await client.models.list();
     const availableModelIds = list.data.map((m) => m.id);
-    logger.info(`📋 Groq available models on this key: ${availableModelIds.join(', ')}`);
 
+    // Find first preferred model not excluded or cooling down
     for (const candidate of PREFERRED_MODELS) {
       const found = availableModelIds.find(
-        (id) => id === candidate || id.endsWith(`/${candidate}`) || id.includes(candidate)
+        (id) => (id === candidate || id.endsWith(`/${candidate}`) || id.includes(candidate)) &&
+          !excludedModels.has(id) &&
+          ((modelCooldowns.get(id) || 0) < now)
       );
       if (found) {
         cachedActiveModel = found;
-        logger.info(`🎯 Selected Groq model: ${found}`);
         return found;
       }
     }
@@ -122,6 +131,8 @@ async function resolveGroqModel(client: Groq): Promise<string> {
     // Pick first available text/chat model (exclude whisper, guard, safeguard, canopylabs/orpheus)
     const fallbackTextModel = availableModelIds.find(
       (id) =>
+        !excludedModels.has(id) &&
+        ((modelCooldowns.get(id) || 0) < now) &&
         !id.includes('whisper') &&
         !id.includes('guard') &&
         !id.includes('safeguard') &&
@@ -130,11 +141,10 @@ async function resolveGroqModel(client: Groq): Promise<string> {
     );
     if (fallbackTextModel) {
       cachedActiveModel = fallbackTextModel;
-      logger.info(`🎯 Selected Groq fallback model: ${fallbackTextModel}`);
       return fallbackTextModel;
     }
   } catch (err: any) {
-    logger.warn(`Could not list Groq models: ${err.message}. Defaulting to openai/gpt-oss-120b`);
+    logger.warn(`Could not list Groq models: ${err.message}.`);
   }
 
   return 'openai/gpt-oss-120b';
@@ -227,32 +237,50 @@ Respond strictly with valid JSON conforming to this schema:
       currentDate: new Date().toISOString().split('T')[0],
     })}`;
 
-    const modelToUse = await resolveGroqModel(client);
-
+    const excludedModels = new Set<string>();
     let completion: any;
-    try {
-      completion = await client.chat.completions.create({
-        model: modelToUse,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-      });
-    } catch (apiErr: any) {
-      if (apiErr?.message?.includes('json_validate_failed') || apiErr?.status === 400) {
-        logger.debug(`Retrying Groq completion without strict json_object constraint`);
-        completion = await client.chat.completions.create({
-          model: modelToUse,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `${userPrompt}\n\nIMPORTANT: Output ONLY the raw JSON object with no markdown wrappers.` },
-          ],
-          temperature: 0.1,
-        });
-      } else {
-        throw apiErr;
+    let modelToUse = '';
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      modelToUse = await resolveGroqModel(client, excludedModels);
+      try {
+        try {
+          completion = await client.chat.completions.create({
+            model: modelToUse,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0.1,
+          });
+        } catch (apiErr: any) {
+          if (apiErr?.message?.includes('json_validate_failed') || apiErr?.status === 400) {
+            completion = await client.chat.completions.create({
+              model: modelToUse,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `${userPrompt}\n\nIMPORTANT: Output ONLY the raw JSON object with no markdown wrappers.` },
+              ],
+              temperature: 0.1,
+            });
+          } else {
+            throw apiErr;
+          }
+        }
+        break;
+      } catch (err: any) {
+        if (err?.status === 429 || err?.message?.includes('429')) {
+          modelCooldowns.set(modelToUse, Date.now() + 60_000);
+          excludedModels.add(modelToUse);
+          cachedActiveModel = null;
+          logger.warn(`Groq rate limit (429) on ${modelToUse} for row ${row.id}. Rotating to next model...`);
+          if (attempt === 1) {
+            return null;
+          }
+        } else {
+          throw err;
+        }
       }
     }
 
