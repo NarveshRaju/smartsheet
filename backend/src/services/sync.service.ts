@@ -19,15 +19,16 @@ function isAllDayIndicator(val?: string): boolean {
   if (!val) return false;
   const lower = val.trim().toLowerCase();
   return (
-    lower === 'all day' ||
-    lower === 'allday' ||
-    lower === 'all-day' ||
-    lower === 'all_day' ||
-    lower === 'all day event' ||
-    lower === 'full day' ||
-    lower === 'whole day' ||
+    lower.includes('all day') ||
+    lower.includes('allday') ||
+    lower.includes('all-day') ||
+    lower.includes('all_day') ||
+    lower.includes('full day') ||
+    lower.includes('fullday') ||
+    lower.includes('whole day') ||
     lower === 'true' ||
-    lower === 'yes'
+    lower === 'yes' ||
+    lower === 'y'
   );
 }
 
