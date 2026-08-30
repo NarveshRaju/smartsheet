@@ -56,7 +56,25 @@ router.get('/google/callback', async (req: Request, res: Response) => {
         },
       });
       logger.info(`Created admin user: ${user.id}`);
+    } else {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          email: userInfo.email || user.email,
+          displayName: userInfo.name || user.displayName,
+        },
+      });
     }
+
+    const existingAccount = await prisma.oAuthAccount.findUnique({
+      where: { userId_provider: { userId: user.id, provider: 'google' } },
+    });
+
+    const isDifferentAccount = Boolean(
+      existingAccount?.providerAccountId &&
+      userInfo.id &&
+      existingAccount.providerAccountId !== userInfo.id
+    );
 
     await prisma.oAuthAccount.upsert({
       where: { userId_provider: { userId: user.id, provider: 'google' } },
@@ -78,9 +96,25 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       },
     });
 
+    // If switching to a completely different Google account, reset the old calendar ID so background worker doesn't sync it
+    if (isDifferentAccount) {
+      logger.info(`Detected different Google account login (${userInfo.email}). Updating sync configuration.`);
+      const currentConfig = await prisma.syncConfiguration.findFirst({ where: { userId: user.id } });
+      if (currentConfig) {
+        await prisma.syncConfiguration.update({
+          where: { id: currentConfig.id },
+          data: {
+            googleCalendarId: 'primary',
+            calendarName: 'Primary Calendar',
+            isEnabled: false,
+          },
+        });
+      }
+    }
+
     req.session.userId = user.id;
 
-    logger.info(`Google OAuth completed for user ${user.id}`);
+    logger.info(`Google OAuth completed for user ${user.id} (${userInfo.email})`);
     res.redirect(getRedirectUrl(req, 'auth=google_success'));
   } catch (error: any) {
     logger.error(`Google OAuth callback error: ${error.message}`);
@@ -215,6 +249,16 @@ router.post('/disconnect/:provider', async (req: Request, res: Response) => {
         } catch (e: any) {
           logger.warn(`Failed to clean up webhook on disconnect: ${e.message}`);
         }
+      }
+    }
+
+    if (provider === 'google') {
+      const config = await prisma.syncConfiguration.findFirst({ where: { userId } });
+      if (config) {
+        await prisma.syncConfiguration.update({
+          where: { id: config.id },
+          data: { isEnabled: false },
+        });
       }
     }
 
