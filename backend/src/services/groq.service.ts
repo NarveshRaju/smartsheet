@@ -7,15 +7,14 @@ let groqClient: Groq | null = null;
 let cachedActiveModel: string | null = null;
 
 const PREFERRED_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'qwen/qwen3.6-27b',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
+  'allam-2-7b',
   'groq/compound-mini',
   'groq/compound',
-  'qwen/qwen3.6-27b',
-  'qwen3.6-27b',
-  'llama-3.1-8b-instant',
-  'llama-3.3-70b-versatile',
-  'allam-2-7b',
 ];
 
 function getGroqClient(): Groq | null {
@@ -237,6 +236,7 @@ Respond strictly with valid JSON conforming to this schema:
     return parsed as CalendarEventData;
   } catch (error: any) {
     if (error?.status === 429 || error?.message?.includes('429')) {
+      cachedActiveModel = null;
       logger.warn(`Groq rate limit (429) reached for row ${row.id}. Gracefully falling back to standard parser.`);
     } else {
       const errorDetails = error?.response?.data ? JSON.stringify(error.response.data) : error.message;

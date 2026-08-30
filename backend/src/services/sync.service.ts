@@ -112,6 +112,49 @@ function parseSmartsheetDateTime(
   };
 }
 
+function addDaysToDateString(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  const nextY = date.getUTCFullYear();
+  const nextM = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const nextD = String(date.getUTCDate()).padStart(2, '0');
+  return `${nextY}-${nextM}-${nextD}`;
+}
+
+function sanitizeCalendarEventRange(event: CalendarEventData, timezone: string): CalendarEventData {
+  if (event.start.date) {
+    // All-day event: end.date is exclusive in Google Calendar API
+    let endDate = event.end.date || event.start.date;
+    if (endDate <= event.start.date) {
+      endDate = addDaysToDateString(event.start.date, 1);
+    }
+    return {
+      ...event,
+      start: { date: event.start.date, timeZone: timezone },
+      end: { date: endDate, timeZone: timezone },
+    };
+  } else if (event.start.dateTime) {
+    // Timed event: end.dateTime must be strictly after start.dateTime
+    const startTime = new Date(event.start.dateTime).getTime();
+    let endDateTime = event.end.dateTime;
+    let endTime = endDateTime ? new Date(endDateTime).getTime() : NaN;
+
+    if (isNaN(endTime) || endTime <= startTime) {
+      const sDate = new Date(event.start.dateTime);
+      sDate.setHours(sDate.getHours() + 1);
+      endDateTime = sDate.toISOString();
+    }
+
+    return {
+      ...event,
+      start: { dateTime: event.start.dateTime, timeZone: timezone },
+      end: { dateTime: endDateTime!, timeZone: timezone },
+    };
+  }
+  return event;
+}
+
 /**
  * Standard algorithmic row mapper.
  */
@@ -168,8 +211,11 @@ function mapRowToEventStandard(
   let event: CalendarEventData;
 
   if (startParsed.isAllDay) {
-    // All-day event: both start and end MUST be date-only for Google Calendar
-    const endDateOnly = endParsed?.dateOnly || startParsed.dateOnly;
+    // All-day event: end.date is exclusive in Google Calendar API
+    let endDateOnly = endParsed?.dateOnly || startParsed.dateOnly;
+    if (endDateOnly <= startParsed.dateOnly) {
+      endDateOnly = addDaysToDateString(startParsed.dateOnly, 1);
+    }
     event = {
       summary: title,
       start: { date: startParsed.dateOnly, timeZone: timezone },
@@ -178,8 +224,9 @@ function mapRowToEventStandard(
   } else {
     // Timed event: both start and end MUST be dateTime for Google Calendar
     let endDateTime = endParsed?.hasTime && endParsed?.dateTime ? endParsed.dateTime : undefined;
-    if (!endDateTime) {
-      // Default to 1 hour after start if no end time is specified
+    const startTimeMs = new Date(startParsed.dateTime!).getTime();
+    if (!endDateTime || new Date(endDateTime).getTime() <= startTimeMs) {
+      // Default to 1 hour after start if no valid end time is specified
       const sDate = new Date(startParsed.dateTime!);
       sDate.setHours(sDate.getHours() + 1);
       endDateTime = sDate.toISOString();
@@ -218,7 +265,7 @@ function mapRowToEventStandard(
     }
   }
 
-  return event;
+  return sanitizeCalendarEventRange(event, timezone);
 }
 
 /**
@@ -235,7 +282,7 @@ async function mapRowToEvent(
     try {
       const aiEvent = await curateEventWithGroq(row, columnMapping, timezone);
       if (aiEvent) {
-        return aiEvent;
+        return sanitizeCalendarEventRange(aiEvent, timezone);
       }
     } catch (e: any) {
       logger.warn(`Groq curation error: ${e.message}, falling back to standard mapper`);
