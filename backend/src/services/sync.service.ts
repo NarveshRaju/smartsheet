@@ -263,8 +263,36 @@ function hasRowChanged(newRow: any, storedData: any): boolean {
   return extractRowSignature(newRow) !== extractRowSignature(storedData);
 }
 
+function normalizeTitle(title?: string): string {
+  if (!title) return '';
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\w\s]/g, '');
+}
+
+function getEventFingerprint(
+  summary?: string | null,
+  start?: { dateTime?: string | null; date?: string | null } | null
+): string {
+  const norm = normalizeTitle(summary || '');
+  const startStr = (start?.dateTime || start?.date || '').substring(0, 10);
+  return `${norm}:::${startStr}`;
+}
+
+function getEventTimeFingerprint(
+  summary?: string | null,
+  start?: { dateTime?: string | null; date?: string | null } | null
+): string {
+  const norm = normalizeTitle(summary || '');
+  const startStr = (start?.dateTime || start?.date || '').substring(0, 16);
+  return `${norm}:::${startStr}`;
+}
+
 /**
  * Full sync: compare all Smartsheet rows with stored records and sync differences.
+ * Includes intelligent deduplication to prevent duplicate events on existing calendars.
  */
 export async function fullSync(configId: string): Promise<SyncResult> {
   const config = await prisma.syncConfiguration.findUnique({
@@ -279,18 +307,54 @@ export async function fullSync(configId: string): Promise<SyncResult> {
   const timezone = env.DEFAULT_TIMEZONE;
   const result: SyncResult = { created: 0, updated: 0, deleted: 0, failed: 0, errors: [] };
 
-  logger.info(`Starting full sync for config ${configId}`);
+  logger.info(`Starting full sync for config ${configId} on calendar ${config.googleCalendarId}`);
 
   try {
     // Fetch all rows from Smartsheet
     const rows = await smartsheetService.getSheetRows(userId, config.smartsheetSheetId);
     const rowIds = new Set(rows.map((r: any) => r.id.toString()));
 
-    // Get existing sync records
+    // Get existing sync records from DB
     const existingRecords = await prisma.syncRecord.findMany({
       where: { syncConfigId: configId },
     });
     const recordMap = new Map(existingRecords.map((r) => [r.smartsheetRowId, r]));
+
+    // Pre-fetch existing events from Google Calendar for smart deduplication
+    let calendarEvents: any[] = [];
+    try {
+      calendarEvents = await googleService.listCalendarEvents(userId, config.googleCalendarId);
+      logger.info(`Found ${calendarEvents.length} existing events in Google Calendar for deduplication check`);
+    } catch (calErr: any) {
+      logger.warn(`Could not pre-fetch calendar events for deduplication: ${calErr.message}`);
+    }
+
+    // Build deduplication index maps
+    const gcalById = new Map<string, any>();
+    const gcalByRowId = new Map<string, any>();
+    const gcalByTimeFingerprint = new Map<string, any>();
+    const gcalByDateFingerprint = new Map<string, any>();
+
+    for (const evt of calendarEvents) {
+      if (!evt || !evt.id || evt.status === 'cancelled') continue;
+      gcalById.set(evt.id, evt);
+
+      const rowTag = evt.extendedProperties?.private?.smartsheetRowId;
+      if (rowTag) {
+        gcalByRowId.set(rowTag.toString(), evt);
+      }
+
+      if (evt.summary && evt.start) {
+        const timeKey = getEventTimeFingerprint(evt.summary, evt.start);
+        if (!gcalByTimeFingerprint.has(timeKey)) {
+          gcalByTimeFingerprint.set(timeKey, evt);
+        }
+        const dateKey = getEventFingerprint(evt.summary, evt.start);
+        if (!gcalByDateFingerprint.has(dateKey)) {
+          gcalByDateFingerprint.set(dateKey, evt);
+        }
+      }
+    }
 
     // Process each row
     for (const row of rows) {
@@ -298,9 +362,14 @@ export async function fullSync(configId: string): Promise<SyncResult> {
       const existingRecord = recordMap.get(rowId);
 
       // ⚡ EFFICIENCY OPTIMIZATION:
-      // If record is already synced and row has not changed at all, SKIP COMPLETELY!
-      // Do NOT call Groq LLM or Google Calendar API for untouched rows!
-      if (existingRecord && existingRecord.syncStatus === 'synced' && !hasRowChanged(row, existingRecord.rowData)) {
+      // If record is already synced, row has not changed, and event exists on target calendar, skip completely!
+      if (
+        existingRecord &&
+        existingRecord.syncStatus === 'synced' &&
+        existingRecord.googleEventId &&
+        (!calendarEvents.length || gcalById.has(existingRecord.googleEventId)) &&
+        !hasRowChanged(row, existingRecord.rowData)
+      ) {
         continue;
       }
 
@@ -330,56 +399,116 @@ export async function fullSync(configId: string): Promise<SyncResult> {
           continue; // Skip rows without time
         }
 
-        if (!existingRecord) {
-          // CREATE: New row, create calendar event
-          const eventId = await googleService.createEvent(
+        // Add private metadata tags for deterministic identification
+        const eventDataWithProps: CalendarEventData = {
+          ...eventData,
+          extendedProperties: {
+            private: {
+              smartsheetRowId: rowId,
+              smartsheetSheetId: config.smartsheetSheetId,
+            },
+          },
+        };
+
+        // Determine if we already have a valid linked Google event
+        let targetEventId = existingRecord?.googleEventId || null;
+        let isExistingEventOnCalendar = targetEventId ? (calendarEvents.length === 0 || gcalById.has(targetEventId)) : false;
+
+        // ⚡ DEDUPLICATION CHECK:
+        // If we don't have a verified event ID on this calendar, search existing calendar events to prevent duplicates!
+        if (!targetEventId || !isExistingEventOnCalendar) {
+          const timeKey = getEventTimeFingerprint(eventData.summary, eventData.start);
+          const dateKey = getEventFingerprint(eventData.summary, eventData.start);
+
+          const matchedEvent =
+            gcalByRowId.get(rowId) ||
+            gcalByTimeFingerprint.get(timeKey) ||
+            gcalByDateFingerprint.get(dateKey);
+
+          if (matchedEvent && matchedEvent.id) {
+            targetEventId = matchedEvent.id;
+            isExistingEventOnCalendar = true;
+            logger.info(
+              `⚡ Deduplication matched existing event "${matchedEvent.summary}" (${matchedEvent.id}) for row ${rowId}. Linking without duplicating.`
+            );
+
+            // Consume from maps so another row with same title doesn't attach to same single event
+            gcalByRowId.delete(rowId);
+            gcalByTimeFingerprint.delete(timeKey);
+            gcalByDateFingerprint.delete(dateKey);
+          }
+        }
+
+        if (targetEventId && isExistingEventOnCalendar) {
+          // UPDATE / LINK: Event exists in Google Calendar
+          await googleService.updateEvent(
             userId,
             config.googleCalendarId,
-            eventData
+            targetEventId,
+            eventDataWithProps
           );
-          await prisma.syncRecord.create({
-            data: {
-              syncConfigId: configId,
-              smartsheetRowId: rowId,
-              googleEventId: eventId,
-              syncStatus: 'synced',
-              syncAction: 'create',
-              lastSyncedAt: new Date(),
-              rowData: row,
-            },
-          });
-          result.created++;
-        } else if (hasRowChanged(row, existingRecord.rowData) || existingRecord.syncStatus !== 'synced') {
-          // UPDATE: Row changed, update calendar event
-          if (existingRecord.googleEventId) {
-            await googleService.updateEvent(
-              userId,
-              config.googleCalendarId,
-              existingRecord.googleEventId,
-              eventData
-            );
+
+          if (existingRecord) {
+            await prisma.syncRecord.update({
+              where: { id: existingRecord.id },
+              data: {
+                googleEventId: targetEventId,
+                syncStatus: 'synced',
+                syncAction: existingRecord.googleEventId === targetEventId ? 'update' : 'linked',
+                lastSyncedAt: new Date(),
+                lastError: null,
+                rowData: row,
+              },
+            });
           } else {
-            const eventId = await googleService.createEvent(
-              userId,
-              config.googleCalendarId,
-              eventData
-            );
-            existingRecord.googleEventId = eventId;
+            await prisma.syncRecord.create({
+              data: {
+                syncConfigId: configId,
+                smartsheetRowId: rowId,
+                googleEventId: targetEventId,
+                syncStatus: 'synced',
+                syncAction: 'linked',
+                lastSyncedAt: new Date(),
+                rowData: row,
+              },
+            });
           }
-          await prisma.syncRecord.update({
-            where: { id: existingRecord.id },
-            data: {
-              googleEventId: existingRecord.googleEventId,
-              syncStatus: 'synced',
-              syncAction: 'update',
-              lastSyncedAt: new Date(),
-              lastError: null,
-              rowData: row,
-            },
-          });
           result.updated++;
+        } else {
+          // CREATE: No matching event exists on Google Calendar, create new event
+          const newEventId = await googleService.createEvent(
+            userId,
+            config.googleCalendarId,
+            eventDataWithProps
+          );
+
+          if (existingRecord) {
+            await prisma.syncRecord.update({
+              where: { id: existingRecord.id },
+              data: {
+                googleEventId: newEventId,
+                syncStatus: 'synced',
+                syncAction: 'create',
+                lastSyncedAt: new Date(),
+                lastError: null,
+                rowData: row,
+              },
+            });
+          } else {
+            await prisma.syncRecord.create({
+              data: {
+                syncConfigId: configId,
+                smartsheetRowId: rowId,
+                googleEventId: newEventId,
+                syncStatus: 'synced',
+                syncAction: 'create',
+                lastSyncedAt: new Date(),
+                rowData: row,
+              },
+            });
+          }
+          result.created++;
         }
-        // else: no changes, skip
       } catch (error: any) {
         result.failed++;
         result.errors.push({ rowId, error: error.message });
@@ -456,7 +585,7 @@ export async function fullSync(configId: string): Promise<SyncResult> {
 }
 
 /**
- * Sync a single row (used by webhooks).
+ * Sync a single row (used by webhooks & direct updates).
  */
 export async function syncRow(
   configId: string,
@@ -540,43 +669,95 @@ export async function syncRow(
       return;
     }
 
-    if (action === 'created' || !existingRecord?.googleEventId) {
-      // CREATE — Idempotency: if record exists with event ID, update instead
-      if (existingRecord?.googleEventId) {
-        await googleService.updateEvent(userId, config.googleCalendarId, existingRecord.googleEventId, eventData);
-        await prisma.syncRecord.update({
-          where: { id: existingRecord.id },
-          data: { syncStatus: 'synced', syncAction: 'update', lastSyncedAt: new Date(), lastError: null, rowData: row },
-        });
-      } else {
-        const eventId = await googleService.createEvent(userId, config.googleCalendarId, eventData);
-        await prisma.syncRecord.upsert({
-          where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
-          create: {
-            syncConfigId: configId,
-            smartsheetRowId: rowId,
-            googleEventId: eventId,
-            syncStatus: 'synced',
-            syncAction: 'create',
-            lastSyncedAt: new Date(),
-            rowData: row,
-          },
-          update: {
-            googleEventId: eventId,
-            syncStatus: 'synced',
-            syncAction: 'create',
-            lastSyncedAt: new Date(),
-            lastError: null,
-            rowData: row,
-          },
-        });
+    const eventDataWithProps: CalendarEventData = {
+      ...eventData,
+      extendedProperties: {
+        private: {
+          smartsheetRowId: rowId,
+          smartsheetSheetId: config.smartsheetSheetId,
+        },
+      },
+    };
+
+    let targetEventId = existingRecord?.googleEventId || null;
+
+    // If no existing event ID, perform deduplication lookup
+    if (!targetEventId) {
+      try {
+        const candidateEvents = await googleService.findExistingEvent(
+          userId,
+          config.googleCalendarId,
+          eventData.summary
+        );
+        const targetTimeKey = getEventTimeFingerprint(eventData.summary, eventData.start);
+        const targetDateKey = getEventFingerprint(eventData.summary, eventData.start);
+
+        for (const candidate of candidateEvents) {
+          if (candidate.status === 'cancelled') continue;
+          const rowTag = candidate.extendedProperties?.private?.smartsheetRowId;
+          if (rowTag === rowId) {
+            targetEventId = candidate.id!;
+            break;
+          }
+          if (candidate.summary && candidate.start) {
+            const cTimeKey = getEventTimeFingerprint(candidate.summary, candidate.start);
+            const cDateKey = getEventFingerprint(candidate.summary, candidate.start);
+            if (cTimeKey === targetTimeKey || cDateKey === targetDateKey) {
+              targetEventId = candidate.id!;
+              break;
+            }
+          }
+        }
+      } catch (searchErr: any) {
+        logger.warn(`Could not search existing events for deduplication: ${searchErr.message}`);
       }
+    }
+
+    if (targetEventId) {
+      // UPDATE / LINK existing event
+      await googleService.updateEvent(userId, config.googleCalendarId, targetEventId, eventDataWithProps);
+      await prisma.syncRecord.upsert({
+        where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
+        create: {
+          syncConfigId: configId,
+          smartsheetRowId: rowId,
+          googleEventId: targetEventId,
+          syncStatus: 'synced',
+          syncAction: 'linked',
+          lastSyncedAt: new Date(),
+          rowData: row,
+        },
+        update: {
+          googleEventId: targetEventId,
+          syncStatus: 'synced',
+          syncAction: 'update',
+          lastSyncedAt: new Date(),
+          lastError: null,
+          rowData: row,
+        },
+      });
     } else {
-      // UPDATE
-      await googleService.updateEvent(userId, config.googleCalendarId, existingRecord.googleEventId, eventData);
-      await prisma.syncRecord.update({
-        where: { id: existingRecord.id },
-        data: { syncStatus: 'synced', syncAction: 'update', lastSyncedAt: new Date(), lastError: null, rowData: row },
+      // CREATE new event
+      const eventId = await googleService.createEvent(userId, config.googleCalendarId, eventDataWithProps);
+      await prisma.syncRecord.upsert({
+        where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
+        create: {
+          syncConfigId: configId,
+          smartsheetRowId: rowId,
+          googleEventId: eventId,
+          syncStatus: 'synced',
+          syncAction: 'create',
+          lastSyncedAt: new Date(),
+          rowData: row,
+        },
+        update: {
+          googleEventId: eventId,
+          syncStatus: 'synced',
+          syncAction: 'create',
+          lastSyncedAt: new Date(),
+          lastError: null,
+          rowData: row,
+        },
       });
     }
   } catch (error: any) {

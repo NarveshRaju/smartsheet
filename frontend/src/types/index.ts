@@ -9,7 +9,15 @@ export interface AuthStatus {
 
 export interface Sheet { id: string; name: string; accessLevel: string; modifiedAt: string; }
 export interface Column { id: string; title: string; type: string; index: number; primary: boolean; }
-export interface Calendar { id: string; summary: string; description?: string; primary?: boolean; backgroundColor?: string; }
+export interface Calendar {
+  id: string;
+  summary: string;
+  description?: string;
+  primary?: boolean;
+  backgroundColor?: string;
+  accessRole?: string;
+  timeZone?: string;
+}
 
 export interface ColumnMapping {
   title?: string;

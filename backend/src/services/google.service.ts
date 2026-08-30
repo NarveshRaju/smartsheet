@@ -102,14 +102,105 @@ export async function listCalendars(userId: string) {
   const calendar = google.calendar({ version: 'v3', auth });
 
   return withRetry(async () => {
-    const response = await calendar.calendarList.list();
+    const response = await calendar.calendarList.list({
+      minAccessRole: 'writer',
+    });
     return (response.data.items || []).map((cal) => ({
       id: cal.id,
       summary: cal.summary,
       description: cal.description,
       primary: cal.primary,
       backgroundColor: cal.backgroundColor,
+      accessRole: cal.accessRole,
+      timeZone: cal.timeZone,
     }));
+  });
+}
+
+export async function createCalendar(
+  userId: string,
+  summary: string,
+  description?: string,
+  timeZone?: string
+) {
+  const auth = await getAuthenticatedClient(userId);
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  return withRetry(async () => {
+    const response = await calendar.calendars.insert({
+      requestBody: {
+        summary,
+        description,
+        timeZone: timeZone || env.DEFAULT_TIMEZONE || 'UTC',
+      },
+    });
+    logger.info(`Created new Google Calendar: ${response.data.id} (${response.data.summary})`);
+    return {
+      id: response.data.id!,
+      summary: response.data.summary!,
+      description: response.data.description || undefined,
+      primary: false,
+      backgroundColor: '#4285f4',
+      accessRole: 'owner',
+      timeZone: response.data.timeZone || undefined,
+    };
+  });
+}
+
+export async function listCalendarEvents(
+  userId: string,
+  calendarId: string,
+  timeMin?: string,
+  timeMax?: string
+): Promise<calendar_v3.Schema$Event[]> {
+  const auth = await getAuthenticatedClient(userId);
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  return withRetry(async () => {
+    const allEvents: calendar_v3.Schema$Event[] = [];
+    let pageToken: string | undefined = undefined;
+
+    do {
+      const response: calendar_v3.Schema$Events = (
+        await calendar.events.list({
+          calendarId,
+          maxResults: 2500,
+          singleEvents: true,
+          showDeleted: false,
+          timeMin,
+          timeMax,
+          pageToken,
+        })
+      ).data;
+
+      if (response.items) {
+        allEvents.push(...response.items);
+      }
+      pageToken = response.nextPageToken || undefined;
+    } while (pageToken);
+
+    logger.debug(`Fetched ${allEvents.length} events from calendar ${calendarId} for deduplication check`);
+    return allEvents;
+  });
+}
+
+export async function findExistingEvent(
+  userId: string,
+  calendarId: string,
+  query: string
+): Promise<calendar_v3.Schema$Event[]> {
+  const auth = await getAuthenticatedClient(userId);
+  const calendar = google.calendar({ version: 'v3', auth });
+
+  return withRetry(async () => {
+    const response = await calendar.events.list({
+      calendarId,
+      q: query,
+      maxResults: 25,
+      singleEvents: true,
+      showDeleted: false,
+    });
+    return response.data.items || [];
   });
 }
 

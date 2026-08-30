@@ -29,6 +29,20 @@ export interface CalendarEventData {
   end: { dateTime?: string; date?: string; timeZone: string };
   attendees?: Array<{ email: string }>;
   status?: string;
+  extendedProperties?: {
+    private?: Record<string, string>;
+    shared?: Record<string, string>;
+  };
+}
+
+export interface GoogleCalendarItem {
+  id: string;
+  summary: string;
+  description?: string;
+  primary?: boolean;
+  backgroundColor?: string;
+  accessRole?: string;
+  timeZone?: string;
 }
 
 export interface SyncResult {

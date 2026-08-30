@@ -580,6 +580,146 @@ body {
   letter-spacing: 0.04em;
 }
 
+.selector-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.selector-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.badge-subtle {
+  font-size: 0.65rem;
+  font-weight: 500;
+  padding: 0.1rem 0.5rem;
+  background: var(--bg-glass);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.selector-check {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-blue);
+  margin-left: auto;
+}
+
+/* ── Inline Create Calendar Form ───────────────────────── */
+
+.create-calendar-box {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: var(--radius-md);
+  padding: 1.125rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), var(--shadow-glow-blue);
+  animation: fadeInDown 0.25s ease-out;
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.create-calendar-header {
+  margin-bottom: 0.875rem;
+}
+
+.create-calendar-header h4 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.125rem;
+}
+
+.create-calendar-hint {
+  font-size: 0.725rem;
+  color: var(--text-muted);
+}
+
+.create-calendar-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.create-calendar-inputs .input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.create-calendar-inputs label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.create-calendar-inputs input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.825rem;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.create-calendar-inputs input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.create-calendar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.alert-sm {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+/* ── Deduplication Info Box ────────────────────────────── */
+
+.calendar-dedup-hint {
+  margin-top: 0.875rem;
+  padding: 0.625rem 0.875rem;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: 0.725rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.calendar-dedup-hint .dedup-icon {
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+}
+
+.calendar-dedup-hint strong {
+  color: var(--accent-emerald);
+}
+
 /* ── Column Mapping ────────────────────────────────────── */
 
 .mapping-card { margin-bottom: 1.25rem; }

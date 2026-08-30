@@ -25,6 +25,8 @@ export const api = {
   logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }),
   disconnect: (provider: 'google' | 'smartsheet') => request<{ success: boolean }>('/auth/disconnect/' + provider, { method: 'POST' }),
   getCalendars: () => request<{ calendars: Calendar[] }>('/api/google/calendars'),
+  createCalendar: (data: { summary: string; description?: string; timeZone?: string }) =>
+    request<{ calendar: Calendar }>('/api/google/calendars', { method: 'POST', body: JSON.stringify(data) }),
   getSheets: () => request<{ sheets: Sheet[] }>('/api/smartsheet/sheets'),
   getSheetColumns: (sheetId: string) => request<{ columns: Column[] }>('/api/smartsheet/sheets/' + sheetId + '/columns'),
   getSyncConfig: () => request<{ config: SyncConfig | null }>('/api/sync/config'),
