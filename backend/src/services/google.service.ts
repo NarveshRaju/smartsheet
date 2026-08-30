@@ -147,6 +147,53 @@ export async function createCalendar(
   });
 }
 
+/**
+ * Safely resolves a calendar ID for Google Calendar API calls.
+ * - Handles primary calendar aliases ('primary')
+ * - Resolves email address IDs to 'primary' if they are the primary calendar
+ * - If calendar is not found in user's calendar list, falls back gracefully to 'primary'
+ */
+async function getSafeCalendarId(
+  calendar: calendar_v3.Calendar,
+  calendarId: string
+): Promise<string> {
+  if (!calendarId || calendarId === 'primary') {
+    return 'primary';
+  }
+
+  try {
+    const listRes = await calendar.calendarList.list({ minAccessRole: 'writer' });
+    const items = listRes.data.items || [];
+
+    // 1. Check for exact match in calendarList
+    const exact = items.find((c) => c.id === calendarId);
+    if (exact) {
+      if (exact.primary) return 'primary';
+      return exact.id!;
+    }
+
+    // 2. Check if calendarId matches summary (name) of any calendar
+    const matchSummary = items.find(
+      (c) => c.summary?.toLowerCase() === calendarId.toLowerCase()
+    );
+    if (matchSummary) {
+      if (matchSummary.primary) return 'primary';
+      return matchSummary.id!;
+    }
+
+    // 3. Fallback: if not found, use user's primary calendar to prevent 404
+    const primary = items.find((c) => c.primary) || items[0];
+    if (primary) {
+      logger.warn(`Calendar "${calendarId}" not found in user calendar list. Falling back to primary calendar.`);
+      return 'primary';
+    }
+  } catch (err: any) {
+    logger.warn(`Could not verify calendar list for "${calendarId}": ${err.message}`);
+  }
+
+  return calendarId;
+}
+
 export async function listCalendarEvents(
   userId: string,
   calendarId: string,
@@ -157,29 +204,50 @@ export async function listCalendarEvents(
   const calendar = google.calendar({ version: 'v3', auth });
 
   return withRetry(async () => {
+    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
     const allEvents: calendar_v3.Schema$Event[] = [];
     let pageToken: string | undefined = undefined;
 
-    do {
-      const response: calendar_v3.Schema$Events = (
-        await calendar.events.list({
-          calendarId,
+    try {
+      do {
+        const response: calendar_v3.Schema$Events = (
+          await calendar.events.list({
+            calendarId: targetCalendarId,
+            maxResults: 2500,
+            singleEvents: true,
+            showDeleted: false,
+            timeMin,
+            timeMax,
+            pageToken,
+          })
+        ).data;
+
+        if (response.items) {
+          allEvents.push(...response.items);
+        }
+        pageToken = response.nextPageToken || undefined;
+      } while (pageToken);
+    } catch (err: any) {
+      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
+        logger.warn(`Calendar "${targetCalendarId}" returned 404 on list events, retrying with "primary"`);
+        targetCalendarId = 'primary';
+        const response = await calendar.events.list({
+          calendarId: 'primary',
           maxResults: 2500,
           singleEvents: true,
           showDeleted: false,
           timeMin,
           timeMax,
-          pageToken,
-        })
-      ).data;
-
-      if (response.items) {
-        allEvents.push(...response.items);
+        });
+        if (response.data.items) {
+          allEvents.push(...response.data.items);
+        }
+      } else {
+        throw err;
       }
-      pageToken = response.nextPageToken || undefined;
-    } while (pageToken);
+    }
 
-    logger.debug(`Fetched ${allEvents.length} events from calendar ${calendarId} for deduplication check`);
+    logger.debug(`Fetched ${allEvents.length} events from calendar ${targetCalendarId} for deduplication check`);
     return allEvents;
   });
 }
@@ -193,14 +261,30 @@ export async function findExistingEvent(
   const calendar = google.calendar({ version: 'v3', auth });
 
   return withRetry(async () => {
-    const response = await calendar.events.list({
-      calendarId,
-      q: query,
-      maxResults: 25,
-      singleEvents: true,
-      showDeleted: false,
-    });
-    return response.data.items || [];
+    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
+    try {
+      const response = await calendar.events.list({
+        calendarId: targetCalendarId,
+        q: query,
+        maxResults: 25,
+        singleEvents: true,
+        showDeleted: false,
+      });
+      return response.data.items || [];
+    } catch (err: any) {
+      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
+        logger.warn(`Calendar "${targetCalendarId}" returned 404 on search, retrying with "primary"`);
+        const response = await calendar.events.list({
+          calendarId: 'primary',
+          q: query,
+          maxResults: 25,
+          singleEvents: true,
+          showDeleted: false,
+        });
+        return response.data.items || [];
+      }
+      throw err;
+    }
   });
 }
 
@@ -213,10 +297,24 @@ export async function createEvent(
   const calendar = google.calendar({ version: 'v3', auth });
 
   return withRetry(async () => {
-    const response = await calendar.events.insert({
-      calendarId,
-      requestBody: eventData as calendar_v3.Schema$Event,
-    });
+    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
+    let response: any;
+    try {
+      response = await calendar.events.insert({
+        calendarId: targetCalendarId,
+        requestBody: eventData as calendar_v3.Schema$Event,
+      });
+    } catch (err: any) {
+      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
+        logger.warn(`Calendar "${targetCalendarId}" returned 404 on event create, retrying with "primary"`);
+        response = await calendar.events.insert({
+          calendarId: 'primary',
+          requestBody: eventData as calendar_v3.Schema$Event,
+        });
+      } else {
+        throw err;
+      }
+    }
     logger.info(`Created Google Calendar event: ${response.data.id}`);
     return response.data.id!;
   });
@@ -232,11 +330,25 @@ export async function updateEvent(
   const calendar = google.calendar({ version: 'v3', auth });
 
   await withRetry(async () => {
-    await calendar.events.update({
-      calendarId,
-      eventId,
-      requestBody: eventData as calendar_v3.Schema$Event,
-    });
+    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
+    try {
+      await calendar.events.update({
+        calendarId: targetCalendarId,
+        eventId,
+        requestBody: eventData as calendar_v3.Schema$Event,
+      });
+    } catch (err: any) {
+      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
+        logger.warn(`Calendar "${targetCalendarId}" returned 404 on event update, retrying with "primary"`);
+        await calendar.events.update({
+          calendarId: 'primary',
+          eventId,
+          requestBody: eventData as calendar_v3.Schema$Event,
+        });
+      } else {
+        throw err;
+      }
+    }
     logger.info(`Updated Google Calendar event: ${eventId}`);
   });
 }
@@ -250,8 +362,9 @@ export async function deleteEvent(
   const calendar = google.calendar({ version: 'v3', auth });
 
   await withRetry(async () => {
+    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
     try {
-      await calendar.events.delete({ calendarId, eventId });
+      await calendar.events.delete({ calendarId: targetCalendarId, eventId });
       logger.info(`Deleted Google Calendar event: ${eventId}`);
     } catch (error: any) {
       // 404/410 means event already deleted — that's fine
@@ -272,8 +385,9 @@ export async function getEvent(
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
 
+  let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
   try {
-    const response = await calendar.events.get({ calendarId, eventId });
+    const response = await calendar.events.get({ calendarId: targetCalendarId, eventId });
     return response.data;
   } catch (error: any) {
     if (error?.response?.status === 404 || error?.response?.status === 410) {

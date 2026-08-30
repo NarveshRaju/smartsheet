@@ -290,11 +290,29 @@ function getEventTimeFingerprint(
   return `${norm}:::${startStr}`;
 }
 
+const activeSyncMap = new Map<string, Promise<SyncResult>>();
+
 /**
  * Full sync: compare all Smartsheet rows with stored records and sync differences.
  * Includes intelligent deduplication to prevent duplicate events on existing calendars.
  */
 export async function fullSync(configId: string): Promise<SyncResult> {
+  if (activeSyncMap.has(configId)) {
+    logger.info(`Sync already in progress for config ${configId}, returning active sync run`);
+    return activeSyncMap.get(configId)!;
+  }
+
+  const syncPromise = executeFullSync(configId);
+  activeSyncMap.set(configId, syncPromise);
+
+  try {
+    return await syncPromise;
+  } finally {
+    activeSyncMap.delete(configId);
+  }
+}
+
+async function executeFullSync(configId: string): Promise<SyncResult> {
   const config = await prisma.syncConfiguration.findUnique({
     where: { id: configId },
     include: { user: true },
