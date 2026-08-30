@@ -290,15 +290,25 @@ function mapRowToEventStandard(
     const startTimeMs = new Date(startParsed.dateTime!).getTime();
     if (!endDateTime || new Date(endDateTime).getTime() <= startTimeMs) {
       // Default to 1 hour after start if no valid end time is specified
-      const sDate = new Date(startParsed.dateTime!);
-      sDate.setHours(sDate.getHours() + 1);
-      endDateTime = sDate.toISOString();
+      const [datePart, timePart] = startParsed.dateTime!.split('T');
+      if (timePart) {
+        const [h, min, s] = timePart.split(':').map(Number);
+        let endH = (h || 0) + 1;
+        let endDatePart = datePart;
+        if (endH >= 24) {
+          endH -= 24;
+          endDatePart = addDaysToDateString(datePart, 1);
+        }
+        endDateTime = `${endDatePart}T${String(endH).padStart(2, '0')}:${String(min || 0).padStart(2, '0')}:${String(s || 0).padStart(2, '0')}`;
+      } else {
+        endDateTime = startParsed.dateTime;
+      }
     }
 
     event = {
       summary: title,
       start: { dateTime: startParsed.dateTime!, timeZone: timezone },
-      end: { dateTime: endDateTime, timeZone: timezone },
+      end: { dateTime: endDateTime!, timeZone: timezone },
     };
   }
 
@@ -333,25 +343,13 @@ function mapRowToEventStandard(
 
 /**
  * Map a Smartsheet row to Google Calendar event data.
- * If Groq LLM is configured, it uses AI to curate rich event data,
- * otherwise falls back to standard algorithmic mapper.
+ * Uses exact standard deterministic algorithmic mapper to guarantee 100% faithful data.
  */
 async function mapRowToEvent(
   row: any,
   columnMapping: ColumnMapping,
   timezone: string
 ): Promise<CalendarEventData | null> {
-  if (isGroqConfigured()) {
-    try {
-      const aiEvent = await curateEventWithGroq(row, columnMapping, timezone);
-      if (aiEvent) {
-        return sanitizeCalendarEventRange(aiEvent, timezone);
-      }
-    } catch (e: any) {
-      logger.warn(`Groq curation error: ${e.message}, falling back to standard mapper`);
-    }
-  }
-
   return mapRowToEventStandard(row, columnMapping, timezone);
 }
 
@@ -489,17 +487,8 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
       const rowId = row.id.toString();
       const existingRecord = recordMap.get(rowId);
 
-      // ⚡ EFFICIENCY OPTIMIZATION:
-      // If record is already synced, row has not changed, and event exists on target calendar, skip completely!
-      if (
-        existingRecord &&
-        existingRecord.syncStatus === 'synced' &&
-        existingRecord.googleEventId &&
-        (!calendarEvents.length || gcalById.has(existingRecord.googleEventId)) &&
-        !hasRowChanged(row, existingRecord.rowData)
-      ) {
-        continue;
-      }
+      // Check if event on calendar is already 100% up to date
+      const gcalEvent = existingRecord?.googleEventId ? gcalById.get(existingRecord.googleEventId) : null;
 
       try {
         const eventData = await mapRowToEvent(row, columnMapping, timezone);
