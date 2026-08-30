@@ -30,16 +30,69 @@ export function isGroqConfigured(): boolean {
   return Boolean(env.GROQ_API_KEY && env.GROQ_API_KEY.trim().length > 0);
 }
 
-function extractJsonFromText(text: string): any {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      return JSON.parse(match[0]);
-    }
-    throw new Error('No valid JSON structure found in response');
+function extractJsonFromText(rawText: string): any {
+  if (!rawText || !rawText.trim()) {
+    throw new Error('Empty response from AI');
   }
+
+  // 1. Remove thinking / reasoning tags (e.g. <think>...</think>)
+  let cleaned = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  // 2. Try direct JSON parse
+  try {
+    return JSON.parse(cleaned);
+  } catch {}
+
+  // 3. Try stripping markdown code fences ```json ... ```
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim());
+    } catch {}
+  }
+
+  // 4. Find the first balanced JSON object { ... }
+  const firstBrace = cleaned.indexOf('{');
+  if (firstBrace !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = firstBrace; i < cleaned.length; i++) {
+      const char = cleaned[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escape = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (!inString) {
+        if (char === '{') {
+          depth++;
+        } else if (char === '}') {
+          depth--;
+          if (depth === 0) {
+            const jsonSubstring = cleaned.substring(firstBrace, i + 1);
+            try {
+              return JSON.parse(jsonSubstring);
+            } catch {}
+          }
+        }
+      }
+    }
+  }
+
+  throw new Error('No valid JSON structure found in response');
 }
 
 /**
