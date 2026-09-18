@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { prisma } from '../services/db.js';
 import { z } from 'zod';
 import * as syncService from '../services/sync.service.js';
 import * as webhookService from '../services/webhook.service.js';
@@ -10,8 +11,17 @@ import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 router.use(requireAuth);
+
+async function lockConfiguration(id: string): Promise<() => Promise<void>> {
+  const owner = randomUUID();
+  const acquired = await prisma.syncConfiguration.updateMany({ where: { id, OR: [
+    { syncLeaseUntil: null }, { syncLeaseUntil: { isSet: false } }, { syncLeaseUntil: { lt: new Date() } },
+  ] }, data: { syncLeaseOwner: owner, syncLeaseUntil: new Date(Date.now() + 600_000) } });
+  if (!acquired.count) throw Object.assign(new Error('Sync is running. Try again when it finishes.'), { statusCode: 409 });
+  return async () => { await prisma.syncConfiguration.updateMany({ where: { id, syncLeaseOwner: owner }, data: { syncLeaseOwner: null, syncLeaseUntil: null } }); };
+}
 
 const syncConfigSchema = z.object({
   smartsheetSheetId: z.string().min(1),
@@ -54,12 +64,12 @@ router.post('/config', async (req: Request, res: Response, next: NextFunction) =
         googleCalendarId: data.googleCalendarId,
         calendarName: data.calendarName,
         columnMapping: data.columnMapping,
-        isEnabled: data.isEnabled ?? false,
+        isEnabled: data.isEnabled ?? true,
       },
     });
 
     // Try to create webhook if enabled
-    if (data.isEnabled) {
+    if (config.isEnabled) {
       try {
         const webhookId = await webhookService.createWebhook(
           userId,
@@ -75,6 +85,7 @@ router.post('/config', async (req: Request, res: Response, next: NextFunction) =
       }
     }
 
+    if (config.isEnabled) void syncService.fullSync(config.id).catch(error => logger.warn(`Initial sync deferred: ${error.message}`));
     res.status(201).json({ config });
   } catch (error) {
     next(error);
@@ -106,36 +117,50 @@ router.put('/config', async (req: Request, res: Response, next: NextFunction) =>
       return;
     }
 
-    // Handle webhook lifecycle when toggling isEnabled
-    if (data.isEnabled !== undefined && data.isEnabled !== existing.isEnabled) {
-      if (data.isEnabled) {
-        // Enable: create webhook
-        try {
-          const webhookId = await webhookService.createWebhook(
-            userId,
-            data.smartsheetSheetId || existing.smartsheetSheetId
-          );
-          data.isEnabled = true;
-          (data as any).webhookId = webhookId;
-        } catch (error: any) {
-          logger.warn(`Failed to create webhook: ${error.message}. Auto-sync worker will handle syncing.`);
-        }
-      } else if (!data.isEnabled && existing.webhookId) {
-        // Disable: delete webhook
-        try {
-          await webhookService.deleteWebhook(userId, existing.webhookId);
-          (data as any).webhookId = null;
-        } catch (error: any) {
-          logger.warn(`Failed to delete webhook: ${error.message}`);
+    if ((data.smartsheetSheetId && data.smartsheetSheetId !== existing.smartsheetSheetId) ||
+        (data.googleCalendarId && data.googleCalendarId !== existing.googleCalendarId)) {
+      res.status(409).json({ error: 'Reset the current configuration before changing its sheet or calendar. Existing calendar entries are retained.' });
+      return;
+    }
+    if (existing.syncLeaseUntil && existing.syncLeaseUntil > new Date()) {
+      res.status(409).json({ error: 'A sync is running. Try changing the configuration after it finishes.' });
+      return;
+    }
+    const unlock = await lockConfiguration(existing.id);
+    let config;
+    try {
+      // Handle webhook lifecycle when toggling isEnabled
+      if (data.isEnabled !== undefined && data.isEnabled !== existing.isEnabled) {
+        if (data.isEnabled) {
+          // Enable: create webhook
+          try {
+            const webhookId = await webhookService.createWebhook(
+              userId,
+              data.smartsheetSheetId || existing.smartsheetSheetId
+            );
+            data.isEnabled = true;
+            (data as any).webhookId = webhookId;
+          } catch (error: any) {
+            logger.warn(`Failed to create webhook: ${error.message}. Auto-sync worker will handle syncing.`);
+          }
+        } else if (!data.isEnabled && existing.webhookId) {
+          // Disable: delete webhook
+          try {
+            await webhookService.deleteWebhook(userId, existing.webhookId);
+            (data as any).webhookId = null;
+          } catch (error: any) {
+            logger.warn(`Failed to delete webhook: ${error.message}`);
+          }
         }
       }
-    }
 
-    const config = await prisma.syncConfiguration.update({
-      where: { id: existing.id },
-      data: data as any,
-    });
+      config = await prisma.syncConfiguration.update({
+        where: { id: existing.id },
+        data: data as any,
+      });
 
+    } finally { await unlock(); }
+    if (config.isEnabled) void syncService.fullSync(config.id).catch(error => logger.warn(`Configuration sync deferred: ${error.message}`));
     res.json({ config });
   } catch (error) {
     next(error);
@@ -153,25 +178,32 @@ router.delete('/config', async (req: Request, res: Response, next: NextFunction)
       return;
     }
 
-    // Clean up webhook if registered
-    if (config.webhookId) {
-      try {
-        await webhookService.deleteWebhook(userId, config.webhookId);
-      } catch (e: any) {
-        logger.warn(`Failed to delete webhook during sync reset: ${e.message}`);
-      }
+    if (config.syncLeaseUntil && config.syncLeaseUntil > new Date()) {
+      res.status(409).json({ error: 'A sync is running. Reset after it finishes.' });
+      return;
     }
+    const unlock = await lockConfiguration(config.id);
+    try {
+      // Clean up webhook if registered
+      if (config.webhookId) {
+        try {
+          await webhookService.deleteWebhook(userId, config.webhookId);
+        } catch (e: any) {
+          logger.warn(`Failed to delete webhook during sync reset: ${e.message}`);
+        }
+      }
 
-    // Delete sync records first
-    await prisma.syncRecord.deleteMany({
-      where: { syncConfigId: config.id },
-    });
+      // Delete sync records first
+      await prisma.syncRecord.deleteMany({
+        where: { syncConfigId: config.id },
+      });
 
-    // Delete sync configuration
-    await prisma.syncConfiguration.delete({
-      where: { id: config.id },
-    });
+      // Delete sync configuration
+      await prisma.syncConfiguration.delete({
+        where: { id: config.id },
+      });
 
+    } finally { await unlock(); }
     logger.info(`User ${userId} reset sync configuration`);
     res.json({ success: true, message: 'Sync configuration reset successfully' });
   } catch (error) {

@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../services/db.js';
 import * as syncService from '../services/sync.service.js';
 import { webhookLimiter } from '../middleware/rateLimiter.js';
 import { logger } from '../utils/logger.js';
 import type { SmartsheetWebhookPayload } from '../types/index.js';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 /**
  * POST /webhooks/smartsheet
@@ -25,6 +25,7 @@ router.post('/smartsheet', webhookLimiter, async (req: Request, res: Response) =
 
     if (challenge) {
       logger.info(`Smartsheet webhook verification challenge received: ${challenge}`);
+      res.setHeader('Smartsheet-Hook-Response', challenge);
       res.status(200).json({ smartsheetHookResponse: challenge });
       return;
     }
@@ -51,32 +52,9 @@ router.post('/smartsheet', webhookLimiter, async (req: Request, res: Response) =
     // Respond quickly to Smartsheet (must respond within 30 seconds)
     res.status(200).json({ success: true });
 
-    // Process events asynchronously
-    const rowEvents = payload.events.filter((e) => e.objectType === 'row' || e.objectType === 'cell');
-    const processedRowIds = new Set<string>();
-
-    for (const event of rowEvents) {
-      const rowId = (event.rowId || event.id)?.toString();
-      if (!rowId || processedRowIds.has(rowId)) continue;
-      processedRowIds.add(rowId);
-
-      let action: 'created' | 'updated' | 'deleted';
-      if (event.eventType === 'created') {
-        action = 'created';
-      } else if (event.eventType === 'deleted') {
-        action = 'deleted';
-      } else {
-        action = 'updated';
-      }
-
-      try {
-        await syncService.syncRow(config.id, rowId, action);
-        logger.info(`Webhook sync: row ${rowId} ${action}`);
-      } catch (error: any) {
-        logger.error(`Webhook sync failed for row ${rowId}: ${error.message}`);
-        // Error already recorded in syncRow, continue with next event
-      }
-    }
+    // One reconciliation per callback, regardless of the number/order of row and cell events.
+    // Polling catches changes arriving during an in-flight reconciliation.
+    void syncService.fullSync(config.id).catch(error => logger.warn(`Webhook sync deferred: ${error.message}`));
   } catch (error: any) {
     logger.error(`Webhook handler error: ${error.message}`);
     // Still return 200 to avoid Smartsheet retrying

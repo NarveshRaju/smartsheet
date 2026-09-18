@@ -1,0 +1,35 @@
+name: Automatic calendar sync
+on:
+  schedule:
+    - cron: '3/10 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: calendar-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    # Enable only after database migration and repository secrets are configured.
+    if: vars.AUTO_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      SMARTSHEET_CLIENT_ID: ${{ secrets.SMARTSHEET_CLIENT_ID }}
+      SMARTSHEET_CLIENT_SECRET: ${{ secrets.SMARTSHEET_CLIENT_SECRET }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      DEFAULT_TIMEZONE: Asia/Kolkata
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --prefix backend
+      - run: npm run build --prefix backend
+      - run: npm run sync:once --prefix backend

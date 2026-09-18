@@ -30,3 +30,6 @@ pnpm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated client used only for the read-only Postgres migration source
+backend/generated/

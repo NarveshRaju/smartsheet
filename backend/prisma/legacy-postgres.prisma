@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+  output = "../generated/postgres"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_SOURCE_URL")
+}
+
+model User {
+  id            String              @id @default(uuid())
+  email         String?             @unique
+  displayName   String?
+  isAdmin       Boolean             @default(true)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  oauthAccounts OAuthAccount[]
+  syncConfigs   SyncConfiguration[]
+}
+
+model OAuthAccount {
+  id                String    @id @default(uuid())
+  userId            String
+  provider          String    // "google" | "smartsheet"
+  providerAccountId String?
+  accessToken       String    // encrypted at rest
+  refreshToken      String?   // encrypted at rest
+  tokenExpiresAt    DateTime?
+  scopes            String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+model SyncConfiguration {
+  id                String       @id @default(uuid())
+  userId            String
+  smartsheetSheetId String
+  sheetName         String?
+  googleCalendarId  String
+  calendarName      String?
+  columnMapping     Json
+  isEnabled         Boolean      @default(false)
+  webhookId         String?
+  lastFullSyncAt    DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncRecords       SyncRecord[]
+
+  @@index([userId])
+  @@index([smartsheetSheetId])
+}
+
+model SyncRecord {
+  id              String            @id @default(uuid())
+  syncConfigId    String
+  smartsheetRowId String
+  googleEventId   String?
+  syncStatus      String            @default("pending")
+  syncAction      String?
+  lastSyncedAt    DateTime?
+  lastError       String?
+  retryCount      Int               @default(0)
+  rowData         Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  syncConfig      SyncConfiguration @relation(fields: [syncConfigId], references: [id], onDelete: Cascade)
+
+  @@unique([syncConfigId, smartsheetRowId])
+  @@index([syncConfigId])
+  @@index([syncStatus])
+  @@index([googleEventId])
+}

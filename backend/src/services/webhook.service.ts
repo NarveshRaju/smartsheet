@@ -1,11 +1,11 @@
 import axios from 'axios';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './db.js';
 import { decrypt } from './crypto.service.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import { withRetry } from '../utils/apiRetry.js';
 
-const prisma = new PrismaClient();
+
 const SMARTSHEET_API = 'https://api.smartsheet.com/2.0';
 
 async function getAccessToken(userId: string): Promise<string> {

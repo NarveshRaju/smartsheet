@@ -1,12 +1,15 @@
 import { google, calendar_v3 } from 'googleapis';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './db.js';
+
+google.options({ timeout: 20_000 });
 import { encrypt, decrypt } from './crypto.service.js';
 import { withRetry } from '../utils/apiRetry.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { stableEventId } from '../utils/eventIdentity.js';
 import type { CalendarEventData } from '../types/index.js';
 
-const prisma = new PrismaClient();
+
 
 function getOAuth2Client() {
   return new google.auth.OAuth2(
@@ -20,7 +23,7 @@ function getOAuth2Client() {
  * Build an authenticated OAuth2 client for a user.
  * Automatically refreshes tokens if expired.
  */
-async function getAuthenticatedClient(userId: string) {
+async function buildAuthenticatedClient(userId: string) {
   const account = await prisma.oAuthAccount.findUnique({
     where: { userId_provider: { userId, provider: 'google' } },
   });
@@ -62,6 +65,16 @@ async function getAuthenticatedClient(userId: string) {
 
   return oauth2;
 }
+
+const authCache = new Map<string, { expires: number; value: ReturnType<typeof buildAuthenticatedClient> }>();
+async function getAuthenticatedClient(userId: string) {
+  const cached = authCache.get(userId);
+  if (cached && cached.expires > Date.now()) return cached.value;
+  const value = buildAuthenticatedClient(userId);
+  authCache.set(userId, { expires: Date.now() + 30_000, value });
+  try { return await value; } catch (error) { authCache.delete(userId); throw error; }
+}
+export function clearGoogleAuthCache(userId: string): void { authCache.delete(userId); }
 
 export function getGoogleAuthUrl(state: string): string {
   const oauth2 = getOAuth2Client();
@@ -148,267 +161,67 @@ export async function createCalendar(
 }
 
 export async function getCalendarTimezone(userId: string, calendarId: string): Promise<string> {
-  try {
-    const auth = await getAuthenticatedClient(userId);
-    const calendar = google.calendar({ version: 'v3', auth });
-    const targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-
-    const cal = await calendar.calendars.get({ calendarId: targetCalendarId });
-    if (cal.data.timeZone) {
-      return cal.data.timeZone;
-    }
-  } catch (err: any) {
-    logger.warn(`Could not fetch timezone for calendar ${calendarId}: ${err.message}`);
-  }
-  return env.DEFAULT_TIMEZONE || 'UTC';
-}
-
-/**
- * Safely resolves a calendar ID for Google Calendar API calls.
- * - Handles primary calendar aliases ('primary')
- * - Resolves email address IDs to 'primary' if they are the primary calendar
- * - If calendar is not found in user's calendar list, falls back gracefully to 'primary'
- */
-async function getSafeCalendarId(
-  calendar: calendar_v3.Calendar,
-  calendarId: string
-): Promise<string> {
-  if (!calendarId || calendarId === 'primary') {
-    return 'primary';
-  }
-
-  try {
-    const listRes = await calendar.calendarList.list({ minAccessRole: 'writer' });
-    const items = listRes.data.items || [];
-
-    // 1. Check for exact match in calendarList
-    const exact = items.find((c) => c.id === calendarId);
-    if (exact) {
-      if (exact.primary) return 'primary';
-      return exact.id!;
-    }
-
-    // 2. Check if calendarId matches summary (name) of any calendar
-    const matchSummary = items.find(
-      (c) => c.summary?.toLowerCase() === calendarId.toLowerCase()
-    );
-    if (matchSummary) {
-      if (matchSummary.primary) return 'primary';
-      return matchSummary.id!;
-    }
-
-    // 3. Fallback: if not found, use user's primary calendar to prevent 404
-    const primary = items.find((c) => c.primary) || items[0];
-    if (primary) {
-      logger.warn(`Calendar "${calendarId}" not found in user calendar list. Falling back to primary calendar.`);
-      return 'primary';
-    }
-  } catch (err: any) {
-    logger.warn(`Could not verify calendar list for "${calendarId}": ${err.message}`);
-  }
-
-  return calendarId;
-}
-
-export async function listCalendarEvents(
-  userId: string,
-  calendarId: string,
-  timeMin?: string,
-  timeMax?: string
-): Promise<calendar_v3.Schema$Event[]> {
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
-
-  return withRetry(async () => {
-    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-    const allEvents: calendar_v3.Schema$Event[] = [];
-    let pageToken: string | undefined = undefined;
-
-    try {
-      do {
-        const response: calendar_v3.Schema$Events = (
-          await calendar.events.list({
-            calendarId: targetCalendarId,
-            maxResults: 2500,
-            singleEvents: true,
-            showDeleted: false,
-            timeMin,
-            timeMax,
-            pageToken,
-          })
-        ).data;
-
-        if (response.items) {
-          allEvents.push(...response.items);
-        }
-        pageToken = response.nextPageToken || undefined;
-      } while (pageToken);
-    } catch (err: any) {
-      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
-        logger.warn(`Calendar "${targetCalendarId}" returned 404 on list events, retrying with "primary"`);
-        targetCalendarId = 'primary';
-        const response = await calendar.events.list({
-          calendarId: 'primary',
-          maxResults: 2500,
-          singleEvents: true,
-          showDeleted: false,
-          timeMin,
-          timeMax,
-        });
-        if (response.data.items) {
-          allEvents.push(...response.data.items);
-        }
-      } else {
-        throw err;
-      }
-    }
-
-    logger.debug(`Fetched ${allEvents.length} events from calendar ${targetCalendarId} for deduplication check`);
-    return allEvents;
-  });
+  const response = await withRetry(() => calendar.calendars.get({ calendarId }));
+  return response.data.timeZone || env.DEFAULT_TIMEZONE;
 }
 
-export async function findExistingEvent(
-  userId: string,
-  calendarId: string,
-  query: string
-): Promise<calendar_v3.Schema$Event[]> {
+export async function listCalendarEvents(userId: string, calendarId: string): Promise<calendar_v3.Schema$Event[]> {
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
-
-  return withRetry(async () => {
-    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-    try {
-      const response = await calendar.events.list({
-        calendarId: targetCalendarId,
-        q: query,
-        maxResults: 25,
-        singleEvents: true,
-        showDeleted: false,
-      });
-      return response.data.items || [];
-    } catch (err: any) {
-      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
-        logger.warn(`Calendar "${targetCalendarId}" returned 404 on search, retrying with "primary"`);
-        const response = await calendar.events.list({
-          calendarId: 'primary',
-          q: query,
-          maxResults: 25,
-          singleEvents: true,
-          showDeleted: false,
-        });
-        return response.data.items || [];
-      }
-      throw err;
-    }
-  });
+  const all: calendar_v3.Schema$Event[] = [];
+  let pageToken: string | undefined;
+  do {
+    const response = await withRetry(() => calendar.events.list({ calendarId, maxResults: 2500,
+      singleEvents: false, showDeleted: false, pageToken }));
+    all.push(...(response.data.items || []));
+    pageToken = response.data.nextPageToken || undefined;
+  } while (pageToken);
+  return all;
 }
 
-export async function createEvent(
-  userId: string,
-  calendarId: string,
-  eventData: CalendarEventData
-): Promise<string> {
+export async function createEvent(userId: string, calendarId: string, eventData: CalendarEventData, requestedId: string): Promise<string> {
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
-
-  return withRetry(async () => {
-    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-    let response: any;
+  let id = requestedId;
+  // A deleted deterministic ID is a tombstone. Its ETag gives a stable next generation,
+  // including when an insert succeeded but its response or database write was lost.
+  for (let generation = 0; generation < 10; generation++) {
     try {
-      response = await calendar.events.insert({
-        calendarId: targetCalendarId,
-        requestBody: eventData as calendar_v3.Schema$Event,
-      });
-    } catch (err: any) {
-      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
-        logger.warn(`Calendar "${targetCalendarId}" returned 404 on event create, retrying with "primary"`);
-        response = await calendar.events.insert({
-          calendarId: 'primary',
-          requestBody: eventData as calendar_v3.Schema$Event,
-        });
-      } else {
-        throw err;
-      }
-    }
-    logger.info(`Created Google Calendar event: ${response.data.id}`);
-    return response.data.id!;
-  });
-}
-
-export async function updateEvent(
-  userId: string,
-  calendarId: string,
-  eventId: string,
-  eventData: CalendarEventData
-): Promise<void> {
-  const auth = await getAuthenticatedClient(userId);
-  const calendar = google.calendar({ version: 'v3', auth });
-
-  await withRetry(async () => {
-    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-    try {
-      await calendar.events.update({
-        calendarId: targetCalendarId,
-        eventId,
-        requestBody: eventData as calendar_v3.Schema$Event,
-      });
-    } catch (err: any) {
-      if (err?.response?.status === 404 && targetCalendarId !== 'primary') {
-        logger.warn(`Calendar "${targetCalendarId}" returned 404 on event update, retrying with "primary"`);
-        await calendar.events.update({
-          calendarId: 'primary',
-          eventId,
-          requestBody: eventData as calendar_v3.Schema$Event,
-        });
-      } else {
-        throw err;
-      }
-    }
-    logger.info(`Updated Google Calendar event: ${eventId}`);
-  });
-}
-
-export async function deleteEvent(
-  userId: string,
-  calendarId: string,
-  eventId: string
-): Promise<void> {
-  const auth = await getAuthenticatedClient(userId);
-  const calendar = google.calendar({ version: 'v3', auth });
-
-  await withRetry(async () => {
-    let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-    try {
-      await calendar.events.delete({ calendarId: targetCalendarId, eventId });
-      logger.info(`Deleted Google Calendar event: ${eventId}`);
+      const response = await withRetry(() => calendar.events.insert({ calendarId,
+        requestBody: { ...eventData, id } as calendar_v3.Schema$Event }));
+      return response.data.id!;
     } catch (error: any) {
-      // 404/410 means event already deleted — that's fine
-      if (error?.response?.status === 404 || error?.response?.status === 410) {
-        logger.info(`Google Calendar event already deleted: ${eventId}`);
-        return;
+      if ((error.response?.status || error.code) !== 409) throw error;
+      const existing = await withRetry(() => calendar.events.get({ calendarId, eventId: id }));
+      if (existing.data.status !== 'cancelled') {
+        const tags = existing.data.extendedProperties?.private;
+        const wanted = eventData.extendedProperties?.private;
+        if (tags?.smartsheetSheetId !== wanted?.smartsheetSheetId || tags?.smartsheetRowId !== wanted?.smartsheetRowId) throw new Error('Calendar event identity conflict');
+        await updateEvent(userId, calendarId, id, eventData);
+        return id;
       }
-      throw error;
+      id = stableEventId(requestedId, id, existing.data.etag || 'deleted');
     }
-  });
+  }
+  throw new Error('Too many deleted generations for calendar event; manual review needed');
 }
 
-export async function getEvent(
-  userId: string,
-  calendarId: string,
-  eventId: string
-): Promise<calendar_v3.Schema$Event | null> {
+export async function updateEvent(userId: string, calendarId: string, eventId: string, eventData: CalendarEventData): Promise<void> {
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
+  // PATCH preserves unrelated calendar fields and attendee responses.
+  await withRetry(() => calendar.events.patch({ calendarId, eventId,
+    requestBody: { ...eventData, description: eventData.description || '', location: eventData.location || '',
+      attendees: eventData.attendees || [], status: eventData.status || 'confirmed' } as calendar_v3.Schema$Event }));
+}
 
-  let targetCalendarId = await getSafeCalendarId(calendar, calendarId);
-  try {
-    const response = await calendar.events.get({ calendarId: targetCalendarId, eventId });
-    return response.data;
-  } catch (error: any) {
-    if (error?.response?.status === 404 || error?.response?.status === 410) {
-      return null;
-    }
-    throw error;
-  }
+export async function deleteEvent(userId: string, calendarId: string, eventId: string): Promise<void> {
+  const auth = await getAuthenticatedClient(userId);
+  const calendar = google.calendar({ version: 'v3', auth });
+  await withRetry(async () => {
+    try { await calendar.events.delete({ calendarId, eventId }); }
+    catch (error: any) { if (![404,410].includes(error.response?.status || error.code)) throw error; }
+  });
 }

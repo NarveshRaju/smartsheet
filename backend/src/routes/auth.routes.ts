@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../services/db.js';
 import * as googleService from '../services/google.service.js';
 import * as smartsheetService from '../services/smartsheet.service.js';
 import * as webhookService from '../services/webhook.service.js';
@@ -9,7 +9,7 @@ import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
-const prisma = new PrismaClient();
+
 
 function getRedirectUrl(req: Request, queryParam: string): string {
   if (env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
@@ -112,6 +112,7 @@ router.get('/google/callback', async (req: Request, res: Response) => {
       }
     }
 
+    googleService.clearGoogleAuthCache(user.id);
     req.session.userId = user.id;
 
     logger.info(`Google OAuth completed for user ${user.id} (${userInfo.email})`);
@@ -262,6 +263,7 @@ router.post('/disconnect/:provider', async (req: Request, res: Response) => {
       }
     }
 
+    if (provider === 'google') googleService.clearGoogleAuthCache(userId);
     await prisma.oAuthAccount.deleteMany({
       where: { userId, provider },
     });

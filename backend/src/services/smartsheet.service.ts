@@ -1,11 +1,11 @@
 import axios from 'axios';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './db.js';
 import { decrypt, encrypt } from './crypto.service.js';
 import { withRetry } from '../utils/apiRetry.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
-const prisma = new PrismaClient();
+
 const SMARTSHEET_API = 'https://api.smartsheet.com/2.0';
 
 async function getAccessToken(userId: string): Promise<string> {
@@ -55,6 +55,7 @@ async function getAccessToken(userId: string): Promise<string> {
 function apiClient(token: string) {
   return axios.create({
     baseURL: SMARTSHEET_API,
+    timeout: 20_000,
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -127,12 +128,15 @@ export async function getSheetRows(userId: string, sheetId: string) {
       params: { level: 2, include: 'objectValue' },
     });
     const columns = response.data.columns || [];
-    const rows = response.data.rows || [];
+    const rows = response.data.rows;
+    if (!Array.isArray(rows)) throw new Error('Incomplete Smartsheet response; refusing to reconcile deletions');
+    if (response.data.totalRowCount !== undefined && rows.length !== response.data.totalRowCount) throw new Error('Partial sheet response; refusing to reconcile deletions');
+    const columnById = new Map(columns.map((c: any) => [c.id, c]));
 
     return rows.map((row: any) => {
       const cells: Record<string, any> = {};
       for (const cell of row.cells || []) {
-        const col = columns.find((c: any) => c.id === cell.columnId);
+        const col: any = columnById.get(cell.columnId);
         if (col) {
           cells[col.id.toString()] = {
             value: cell.value,

@@ -31,7 +31,11 @@ export async function withRetry<T>(
       let delayMs: number;
       const retryAfter = error?.response?.headers?.['retry-after'];
       if (retryAfter) {
-        delayMs = parseInt(retryAfter, 10) * 1000;
+        const seconds = Number(retryAfter);
+        delayMs = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now();
+        if (!Number.isFinite(delayMs)) delayMs = baseDelayMs;
+        if (delayMs > maxDelayMs) throw error; // Let the next scheduled sync retry instead of holding the lease.
+        delayMs = Math.max(0, delayMs);
       } else {
         delayMs = Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs);
       }

@@ -28,20 +28,20 @@ export default function SyncControls({ isEnabled, hasConfig, isAiConfigured, onT
         <h3 style={{ margin: 0 }}>⚡ Sync Controls</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span className={'check-badge ' + (isAiConfigured ? 'valid' : '')} style={{ fontSize: '0.75rem' }}>
-            {isAiConfigured ? '🤖 Groq AI Curation: Active' : '⚙️ Standard Parsing (Add GROQ_API_KEY for AI)'}
+            {isAiConfigured ? '🤖 AI for complex rows: Active' : '⚙️ Standard date/time parsing'}
           </span>
         </div>
       </div>
       <div className="sync-toggle">
         <label className="toggle-label">
-          <span>Automatic Real-Time & Background Auto-Sync</span>
+          <span>Automatic sync</span>
           <div className={'toggle-switch ' + (isEnabled ? 'active' : '')} onClick={() => onToggleSync(!isEnabled)}>
             <div className="toggle-thumb" />
           </div>
         </label>
         <p className="toggle-description">
           {isEnabled
-            ? '✅ Auto-sync is active! Changes in Smartsheet will automatically sync to Google Calendar via real-time webhooks and background polling (every 30s).'
+            ? 'Auto-sync is enabled. Changes are processed by webhooks and scheduled checks while you are away. Check the last sync time below for progress.'
             : 'Enable to auto-sync row changes from Smartsheet to Google Calendar automatically.'}
         </p>
       </div>

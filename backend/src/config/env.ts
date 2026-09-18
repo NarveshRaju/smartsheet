@@ -24,7 +24,12 @@ const envSchema = z.object({
   DEFAULT_TIMEZONE: z.string().default('Asia/Kolkata'),
   RENDER_EXTERNAL_URL: z.string().optional(),
   GROQ_API_KEY: z.string().optional(),
-  AUTO_SYNC_INTERVAL_MS: z.string().default('30000'),
+  AI_PROVIDER: z.enum(['groq', 'ollama', 'none']).default('groq'),
+  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  AI_MIN_INTERVAL_MS: z.coerce.number().int().min(1000).default(10000),
+  OLLAMA_BASE_URL: z.string().url().default('http://localhost:11434'),
+  OLLAMA_MODEL: z.string().default('qwen3:8b'),
+  AUTO_SYNC_INTERVAL_MS: z.string().default('60000'),
 });
 
 let parsedEnv: z.infer<typeof envSchema>;
