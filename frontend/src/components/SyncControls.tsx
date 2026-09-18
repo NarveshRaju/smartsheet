@@ -12,12 +12,13 @@ interface Props {
 
 export default function SyncControls({ isEnabled, hasConfig, isAiConfigured, onToggleSync, onSyncComplete }: Props) {
   const [syncing, setSyncing] = useState(false);
+  const [progress, setProgress] = useState('');
   const [result, setResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleFullSync = async () => {
     setSyncing(true); setResult(null); setError(null);
-    try { const { result } = await api.fullSync(); setResult(result); onSyncComplete(); }
+    try { const { result } = await api.fullSync(setProgress); setResult(result); onSyncComplete(); }
     catch (err: any) { setError(err.message); }
     finally { setSyncing(false); }
   };
@@ -55,6 +56,7 @@ export default function SyncControls({ isEnabled, hasConfig, isAiConfigured, onT
           )}
         </button>
       </div>
+      {syncing && <p role="status" aria-live="polite">{progress}</p>}
       {error && <div className="alert alert-error" style={{ marginTop: '1rem' }}><strong>Sync failed:</strong> {error}</div>}
       {result && (
         <div className="sync-result">

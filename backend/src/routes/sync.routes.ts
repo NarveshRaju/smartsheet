@@ -6,7 +6,7 @@ import * as syncService from '../services/sync.service.js';
 import * as webhookService from '../services/webhook.service.js';
 import { isGroqConfigured } from '../services/groq.service.js';
 import { requireAuth } from '../middleware/auth.js';
-import { syncLimiter } from '../middleware/rateLimiter.js';
+import { syncLimiter, progressLimiter } from '../middleware/rateLimiter.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
@@ -222,11 +222,23 @@ router.post('/full', syncLimiter, async (req: Request, res: Response, next: Next
       return;
     }
 
-    const result = await syncService.fullSync(config.id);
-    res.json({ result });
+    const run = syncService.startFullSync(config.id);
+    res.status(202).json({ runId: run.runId });
   } catch (error) {
     next(error);
   }
+});
+
+router.get('/runs/:runId', progressLimiter, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const config = await prisma.syncConfiguration.findFirst({ where: { userId: req.session.userId! } });
+    const run = config && syncService.getRun(config.id, req.params.runId as string);
+    if (!run) {
+      res.status(404).json({ error: 'Sync progress is unavailable after a server restart. Check Sync Status before starting another run.' });
+      return;
+    }
+    res.json({ run });
+  } catch (error) { next(error); }
 });
 
 // ── Sync Single Row ───────────────────────────────────────

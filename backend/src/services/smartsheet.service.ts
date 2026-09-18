@@ -26,6 +26,7 @@ async function getAccessToken(userId: string): Promise<string> {
     }
 
     const response = await axios.post('https://api.smartsheet.com/2.0/token', null, {
+      timeout: 20_000,
       params: {
         grant_type: 'refresh_token',
         client_id: env.SMARTSHEET_CLIENT_ID,

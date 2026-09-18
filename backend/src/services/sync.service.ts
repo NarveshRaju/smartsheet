@@ -1,3 +1,5 @@
+import { beginRun, currentRun, getRun } from './syncProgress.js';
+export { getRun } from './syncProgress.js';
 import { randomUUID } from 'node:crypto';
 import { prisma } from './db.js';
 import * as googleService from './google.service.js';
@@ -15,13 +17,30 @@ const emptyResult = (): SyncResult => ({ created: 0, updated: 0, deleted: 0, fai
 export async function fullSync(configId: string): Promise<SyncResult> {
   const active = activeSyncMap.get(configId);
   if (active) return active;
+  const progress = beginRun(configId);
+  logger.info(`Sync ${progress.runId}: starting config ${configId}`);
   const promise = executeFullSync(configId);
   activeSyncMap.set(configId, promise);
-  try { return await promise; }
+  try {
+    const result = await promise;
+    Object.assign(progress, { status: 'completed', stage: 'Complete', result });
+    logger.info(`Sync ${progress.runId}: completed; created=${result.created}, updated=${result.updated}, deleted=${result.deleted}, failed=${result.failed}`);
+    return result;
+  } catch (error: any) {
+    Object.assign(progress, { status: 'failed', stage: 'Failed', error: error.message });
+    logger.error(`Sync ${progress.runId}: failed (${error.code || error.statusCode || 'sync error'})`);
+    throw error;
+  }
   finally { activeSyncMap.delete(configId); }
 }
 
+export function startFullSync(configId: string) {
+  void fullSync(configId).catch(() => { /* Recorded in run progress and logs. */ });
+  return currentRun(configId)!;
+}
+
 async function executeFullSync(configId: string): Promise<SyncResult> {
+  const progress = currentRun(configId)!;
   const owner = randomUUID();
   const lease = await syncDependencies.db.syncConfiguration.updateMany({
     where: { id: configId, OR: [
@@ -45,13 +64,20 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
   try {
     const config = await syncDependencies.db.syncConfiguration.findUniqueOrThrow({ where: { id: configId } });
     const { userId, googleCalendarId: calendarId, smartsheetSheetId: sheetId } = config;
+    progress.stage = 'Reading calendar timezone';
+    logger.info(`Sync ${progress.runId}: reading calendar timezone`);
     const timezone = await syncDependencies.google.getCalendarTimezone(userId, calendarId);
     // A failed calendar listing aborts the run: never treat a failed lookup as an empty calendar.
+    progress.stage = 'Loading sheet rows and calendar events';
+    logger.info(`Sync ${progress.runId}: loading sheet and calendar`);
     const [rows, records, events] = await Promise.all([
       syncDependencies.smartsheet.getSheetRows(userId, sheetId),
       syncDependencies.db.syncRecord.findMany({ where: { syncConfigId: configId } }),
       syncDependencies.google.listCalendarEvents(userId, calendarId),
     ]);
+    progress.total = rows.length;
+    progress.stage = 'Syncing rows';
+    logger.info(`Sync ${progress.runId}: loaded ${rows.length} rows and ${events.length} calendar events`);
     const recordMap = new Map(records.map(r => [r.smartsheetRowId, r]));
     const byId = new Map(events.filter(e => e.id && e.status !== 'cancelled').map(e => [e.id!, e]));
     const bySource = new Map<string, (typeof events)[number]>();
@@ -81,6 +107,7 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
       if (record?.nextRetryAt && record.nextRetryAt > new Date() && record.failedInputHash === hash) {
         result.failed++;
         result.errors.push({ rowId, error: record.lastError || 'Waiting to retry' });
+        progress.processed++;
         continue;
       }
       try {
@@ -148,8 +175,12 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
           create: { syncConfigId: configId, smartsheetRowId: rowId, syncStatus: 'failed', lastError: error.message, nextRetryAt, failedInputHash: hash, retryCount: attempts },
           update: { syncStatus: 'failed', lastError: error.message, retryCount: { increment: attempts }, nextRetryAt, failedInputHash: hash },
         });
+      } finally {
+        progress.processed++;
+        if (progress.processed % 25 === 0 || progress.processed === progress.total) logger.info(`Sync ${progress.runId}: processed ${progress.processed}/${progress.total} rows`);
       }
     }
+    progress.stage = 'Checking removed rows';
     for (const record of records) {
       if (rowIds.has(record.smartsheetRowId) || record.syncStatus === 'deleted') continue;
       await renew();

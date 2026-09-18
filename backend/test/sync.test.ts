@@ -160,3 +160,21 @@ test('integration: correcting a failed row bypasses its old backoff immediately'
   source.cells.time.value='10:00';syncDependencies.parse=mapRowToEvent;
   assert.equal((await fullSync('config')).created,1);assert.equal(state.records[0].syncStatus,'synced');
 });
+
+test('progress completes with accurate counts and is scoped to its configuration', async () => {
+  const { getRun, startFullSync } = await import('../src/services/sync.service.js');
+  setup([row('1'),row('2','10:00')]);
+  const run=startFullSync('config');
+  assert.equal(run.status,'running');
+  await fullSync('config');
+  const final=getRun('config',run.runId)!;
+  assert.equal(final.status,'completed');assert.equal(final.processed,2);assert.equal(final.total,2);
+  assert.equal(final.result?.created,2);assert.equal(getRun('other',run.runId),undefined);
+});
+test('progress records errors instead of staying running forever', async () => {
+  const { getRun, startFullSync } = await import('../src/services/sync.service.js');
+  setup([row('1')]);syncDependencies.google.listCalendarEvents=async()=>{throw new Error('Calendar unavailable');};
+  const run=startFullSync('config');await assert.rejects(fullSync('config'));
+  assert.equal(getRun('config',run.runId)?.status,'failed');
+  assert.equal(getRun('config',run.runId)?.error,'Calendar unavailable');
+});
