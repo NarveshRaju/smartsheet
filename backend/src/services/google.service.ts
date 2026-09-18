@@ -1,3 +1,4 @@
+import { buildCalendarPatch } from '../utils/calendarPatch.js';
 import { google, calendar_v3 } from 'googleapis';
 import { prisma } from './db.js';
 
@@ -213,8 +214,7 @@ export async function updateEvent(userId: string, calendarId: string, eventId: s
   const calendar = google.calendar({ version: 'v3', auth });
   // PATCH preserves unrelated calendar fields and attendee responses.
   await withRetry(() => calendar.events.patch({ calendarId, eventId,
-    requestBody: { ...eventData, description: eventData.description || '', location: eventData.location || '',
-      attendees: eventData.attendees || [], status: eventData.status || 'confirmed' } as calendar_v3.Schema$Event }));
+    requestBody: buildCalendarPatch(eventData) }));
 }
 
 export async function deleteEvent(userId: string, calendarId: string, eventId: string, etag?: string): Promise<void> {

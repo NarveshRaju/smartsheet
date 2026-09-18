@@ -235,3 +235,37 @@ test('duplicates: cleanup passes ETag and retries failed deletions on next sync'
   syncDependencies.google.deleteEvent=remove;
   assert.equal((await fullSync('config')).deleted,1);assert.deepEqual(state.deletes,['b']);
 });
+
+test('all-day to timed and back updates the same event and removes obsolete Google fields', async () => {
+  const { buildCalendarPatch }=await import('../src/utils/calendarPatch.js');
+  const source=row('1','all day');const events:any[]=[];const state=setup([source],events);
+  await fullSync('config');const originalId=state.records[0].googleEventId;
+  events[0].colorId='7';
+  // Model nested PATCH semantics: omitted date/dateTime fields remain on Google.
+  const merge=(target:any,patch:any)=>{
+    for(const [key,value] of Object.entries(patch)) {
+      if(value===null) delete target[key];
+      else if(typeof value==='object'&&!Array.isArray(value)) {target[key] ||= {};merge(target[key],value);}
+      else target[key]=value;
+    }
+  };
+  syncDependencies.google.updateEvent=async(_u,_c,id,data)=>{merge(events.find(e=>e.id===id),JSON.parse(JSON.stringify(buildCalendarPatch(data))));};
+  source.cells.time.value='14:30';
+  assert.equal((await fullSync('config')).updated,1);
+  assert.equal(events[0].start.dateTime,'2026-09-18T14:30:00');
+  assert.equal(events[0].end.dateTime,'2026-09-18T15:30:00');
+  assert.equal(events[0].start.date,undefined);assert.equal(events[0].end.date,undefined);
+  assert.equal(events[0].colorId,'7');assert.equal(state.records[0].googleEventId,originalId);
+  assert.equal((await fullSync('config')).updated,0);
+  source.cells.time.value='all day';
+  assert.equal((await fullSync('config')).updated,1);
+  assert.equal(events[0].start.date,'2026-09-18');assert.equal(events[0].end.date,'2026-09-19');
+  assert.equal(events[0].start.dateTime,undefined);assert.equal(events[0].end.dateTime,undefined);
+  assert.equal(events[0].start.timeZone,undefined);assert.equal(events[0].end.timeZone,undefined);
+  assert.equal(state.creates.length,1);assert.equal(state.deletes.length,0);
+  assert.equal((await fullSync('config')).updated,0);
+});
+test('calendar patch rejects mixed all-day and timed boundaries before sending', async () => {
+  const {buildCalendarPatch}=await import('../src/utils/calendarPatch.js');
+  assert.throws(()=>buildCalendarPatch({...event(),end:{date:'2026-09-19',timeZone:zone}}),/same date type/);
+});
