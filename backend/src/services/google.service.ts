@@ -217,11 +217,11 @@ export async function updateEvent(userId: string, calendarId: string, eventId: s
       attendees: eventData.attendees || [], status: eventData.status || 'confirmed' } as calendar_v3.Schema$Event }));
 }
 
-export async function deleteEvent(userId: string, calendarId: string, eventId: string): Promise<void> {
+export async function deleteEvent(userId: string, calendarId: string, eventId: string, etag?: string): Promise<void> {
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
   await withRetry(async () => {
-    try { await calendar.events.delete({ calendarId, eventId }); }
+    try { await calendar.events.delete({ calendarId, eventId }, etag ? { headers: { 'If-Match': etag } } : {}); }
     catch (error: any) { if (![404,410].includes(error.response?.status || error.code)) throw error; }
   });
 }

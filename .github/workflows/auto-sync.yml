@@ -12,7 +12,7 @@ jobs:
   sync:
     # Enable only after database migration and repository secrets are configured.
     if: vars.AUTO_SYNC_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -24,12 +24,14 @@ jobs:
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       DEFAULT_TIMEZONE: Asia/Kolkata
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: backend/package-lock.json
+      - name: Validate scheduled-sync secrets
+        run: node backend/scripts/check-worker-env.cjs
       - run: npm ci --prefix backend
       - run: npm run build --prefix backend
       - run: npm run sync:once --prefix backend

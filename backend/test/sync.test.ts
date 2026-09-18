@@ -64,7 +64,7 @@ function setup(rows: any[], events: any[] = [], records: any[] = []) {
   syncDependencies.google.listCalendarEvents = async () => events;
   syncDependencies.google.createEvent = async (_u,_c,data,id) => { creates.push(data);events.push({id,...data});return id; };
   syncDependencies.google.updateEvent = async (_u,_c,id,data) => { writes.push(data);Object.assign(events.find(e=>e.id===id),data); };
-  syncDependencies.google.deleteEvent = async (_u,_c,id) => {deletes.push(id);};
+  syncDependencies.google.deleteEvent = async (_u,_c,id) => {deletes.push(id);const found=events.find(e=>e.id===id);if(found)found.status='cancelled';};
   syncDependencies.parse = async (r,m,t) => {parses++;return mapRowToEvent(r,m,t);};
   return {writes,creates,deletes,records,get parses(){return parses;}};
 }
@@ -177,4 +177,61 @@ test('progress records errors instead of staying running forever', async () => {
   const run=startFullSync('config');await assert.rejects(fullSync('config'));
   assert.equal(getRun('config',run.runId)?.status,'failed');
   assert.equal(getRun('config',run.runId)?.error,'Calendar unavailable');
+});
+
+const owned = (id:string, rowId:string, hour='09', sheetId='sheet') => ({ id, ...event(hour), etag:'snapshot-'+id, extendedProperties:{private:{smartsheetSheetId:sheetId,smartsheetRowId:rowId}} });
+test('duplicates: one source row retains its saved event and deletes all tagged copies, including wrong old times', async () => {
+  const events=[owned('keep','1'),owned('copy1','1'),owned('copy2','1','10')];
+  const records=[{id:'r',smartsheetRowId:'1',googleEventId:'keep',syncStatus:'synced',inputHash:inputHash(row('1'),mapping,zone),parsedEvent:event()}];
+  const state=setup([row('1')],events,records);
+  assert.equal((await fullSync('config')).deleted,2);assert.deepEqual(state.deletes.sort(),['copy1','copy2']);
+  assert.equal(state.writes.length,0);assert.equal(state.creates.length,0);
+  assert.equal((await fullSync('config')).deleted,0);
+});
+test('duplicates: two identical source rows retain two events, one per row', async () => {
+  const events=[owned('a','1'),owned('b','1'),owned('c','2'),owned('d','2')];
+  const state=setup([row('1'),row('2')],events);
+  const result=await fullSync('config');assert.equal(result.created,0);assert.equal(result.deleted,2);
+  assert.equal(new Set(state.records.map(r=>r.googleEventId)).size,2);
+  for(const record of state.records) assert.ok(!state.deletes.includes(record.googleEventId));
+});
+test('duplicates: three untagged exact copies become one for one source row', async () => {
+  const state=setup([row('1')],[{id:'a',...event()},{id:'b',...event()},{id:'c',...event()}]);
+  assert.equal((await fullSync('config')).deleted,2);assert.equal(state.creates.length,0);
+  assert.equal(state.deletes.includes(state.records[0].googleEventId),false);
+});
+test('duplicates: identical untagged copies are allocated to all source rows before removing excess', async () => {
+  const state=setup([row('1'),row('2')],[{id:'a',...event()},{id:'b',...event()},{id:'c',...event()}]);
+  assert.equal((await fullSync('config')).deleted,1);assert.equal(state.records.length,2);
+  assert.equal(new Set(state.records.map(r=>r.googleEventId)).size,2);
+});
+test('duplicates: different times, other sheets, recurrence and different notes are retained', async () => {
+  const state=setup([row('1')],[owned('keep','1'),owned('foreign','1','09','other'),
+    {id:'different-time',...event('10')},{id:'notes',...event(),description:'Separate activity'},
+    {id:'series',...event(),recurrence:['RRULE:FREQ=DAILY']},
+    {id:'partial-other-tag',...event(),extendedProperties:{private:{smartsheetSheetId:'other'}}}]);
+  assert.equal((await fullSync('config')).deleted,0);assert.equal(state.deletes.length,0);
+});
+test('duplicates: unresolved source rows and unowned copies survive extraction failure', async () => {
+  const state=setup([row('1'),row('2')],[owned('a','1'),owned('b','1'),{id:'legacy',...event()},owned('c','2')]);
+  syncDependencies.parse=async(r,m,t)=>{if(r.id==='1')throw new Error('AI rate limit');return mapRowToEvent(r,m,t);};
+  assert.equal((await fullSync('config')).failed,1);assert.deepEqual(state.deletes,[]);
+});
+test('duplicates: no cleanup occurs before survivor is persisted', async () => {
+  const state=setup([row('1')],[owned('a','1'),owned('b','1')]);
+  const save=syncDependencies.db.syncRecord.upsert;let fail=true;
+  (syncDependencies.db.syncRecord as any).upsert=async(args:any)=>{if(fail){fail=false;throw new Error('DB failed');}return save(args);};
+  assert.equal((await fullSync('config')).failed,1);assert.deepEqual(state.deletes,[]);
+});
+test('duplicates: removed source row deletes every owned copy even after records were lost', async () => {
+  const state=setup([],[owned('a','gone'),owned('b','gone'),owned('foreign','gone','09','other')]);
+  assert.equal((await fullSync('config')).deleted,2);assert.deepEqual(state.deletes.sort(),['a','b']);
+});
+test('duplicates: cleanup passes ETag and retries failed deletions on next sync', async () => {
+  const state=setup([row('1')],[owned('a','1'),owned('b','1')]);
+  const remove=syncDependencies.google.deleteEvent;
+  syncDependencies.google.deleteEvent=async(_u,_c,id,etag)=>{assert.equal(etag,'snapshot-'+id);throw new Error('Precondition failed');};
+  const result=await fullSync('config');assert.equal(result.failed,1);assert.equal(result.deleted,0);
+  syncDependencies.google.deleteEvent=remove;
+  assert.equal((await fullSync('config')).deleted,1);assert.deepEqual(state.deletes,['b']);
 });

@@ -6,7 +6,7 @@ One-way sync with a React dashboard, Express API, MongoDB Atlas persistence, Sma
 
 - Saving a new configuration enables automatic sync and starts the first run. You can pause it with the dashboard toggle.
 - Matches by sheet + row metadata first. Existing untagged, non-recurring events are adopted only when title, full start time, and end time match. Same name at different times stays separate. A match is linked to its row, and its mapped fields are updated when necessary.
-- Each source row owns its own event; different rows with identical data are treated as separate source records. Already-existing duplicate calendar events are not automatically deleted.
+- Each source row owns its own event; different rows with identical data are treated as separate source records. After each row is reconciled successfully, extra non-recurring entries tagged with that same sheet and row are removed. Once every row succeeds, surplus untagged entries with identical title, start/end, description, location, attendees and status are also removed. Multiple identical source rows retain one entry each. Different-time or otherwise ambiguous untagged entries are retained, as are other sheets and recurring events. Failed rows keep their entries. Cleanup uses Google ETags to avoid deleting entries edited during the sync.
 - Unchanged rows skip AI and Calendar writes. Changed mappings and calendar timezones invalidate the parser cache.
 - Shared database leases coordinate webhooks, manual sync, and scheduled workers. Deterministic Google event IDs recover inserts after a lost response or a failed database write.
 - Missing required date/time fields or cancelled rows remove their linked events. Invalid/ambiguous extraction is recorded for retry and preserves existing events. Deleted rows remove only their owned events.
@@ -101,3 +101,5 @@ Regression tests cover same-title/different-time rows, exact adoption, source ow
 - [GitHub scheduled workflow limitations](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
 - [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+
+If Actions fails with empty DATABASE_URL or ENCRYPTION_KEY, add the repository **Secrets**; AUTO_SYNC_ENABLED is a **Variable**, and setting it does not copy credentials from Render. The workflow validates missing settings before installing dependencies, without printing their values.

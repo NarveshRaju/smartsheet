@@ -1,3 +1,4 @@
+import { planDuplicateCleanup, type ReconciledRow } from '../utils/duplicateCleanup.js';
 import { beginRun, currentRun, getRun } from './syncProgress.js';
 export { getRun } from './syncProgress.js';
 import { randomUUID } from 'node:crypto';
@@ -80,19 +81,24 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
     logger.info(`Sync ${progress.runId}: loaded ${rows.length} rows and ${events.length} calendar events`);
     const recordMap = new Map(records.map(r => [r.smartsheetRowId, r]));
     const byId = new Map(events.filter(e => e.id && e.status !== 'cancelled').map(e => [e.id!, e]));
-    const bySource = new Map<string, (typeof events)[number]>();
+    const bySource = new Map<string, typeof events>();
     const byContent = new Map<string, (typeof events)>();
     for (const event of byId.values()) {
       const tags = event.extendedProperties?.private;
-      if (tags?.smartsheetSheetId === sheetId && tags.smartsheetRowId) bySource.set(tags.smartsheetRowId, event);
+      if (tags?.smartsheetSheetId === sheetId && tags.smartsheetRowId && !event.recurrence && !event.recurringEventId) {
+        bySource.set(tags.smartsheetRowId, [...(bySource.get(tags.smartsheetRowId) || []), event]);
+      }
       // Only unowned events can be adopted by content. Never steal another row's event.
-      if (!tags?.smartsheetRowId && !event.recurringEventId && !event.recurrence) {
+      if (!tags?.smartsheetRowId && !tags?.smartsheetSheetId && !event.recurringEventId && !event.recurrence) {
         try {
           const key = eventFingerprint(event, timezone);
           byContent.set(key, [...(byContent.get(key) || []), event]);
         } catch { /* Ignore calendar entries with an unsupported boundary. */ }
       }
     }
+    for (const candidates of bySource.values()) candidates.sort((a, b) => a.id!.localeCompare(b.id!));
+    const reconciled = new Map<string, ReconciledRow>();
+    const removedIds = new Set<string>();
     const claimed = new Set<string>();
     // Reserve saved links before iterating so an earlier row cannot adopt a later row's event.
     const reserved = new Map(records.filter(r => r.googleEventId && r.syncStatus !== 'deleted').map(r => [r.googleEventId!, r.smartsheetRowId]));
@@ -117,19 +123,21 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
         await renew();
         const linked = record?.googleEventId ? byId.get(record.googleEventId) : undefined;
         const linkedTags = linked?.extendedProperties?.private;
-        let target = linked && !claimed.has(linked.id!) &&
-          (!linkedTags?.smartsheetRowId || (linkedTags.smartsheetRowId === rowId && linkedTags.smartsheetSheetId === sheetId))
-          ? linked : bySource.get(rowId);
+        let target = linked && !linked.recurrence && !linked.recurringEventId && !claimed.has(linked.id!) &&
+          ((!linkedTags?.smartsheetRowId && !linkedTags?.smartsheetSheetId) || (linkedTags?.smartsheetRowId === rowId && linkedTags.smartsheetSheetId === sheetId))
+          ? linked : bySource.get(rowId)?.find(e => !claimed.has(e.id!));
         if (!eventData || eventData.status === 'cancelled') {
           // Only explicit missing required fields produce null. Parse/AI failures throw and preserve events.
           if (target?.id && !claimed.has(target.id)) {
             claimed.add(target.id);
-            await syncDependencies.google.deleteEvent(userId, calendarId, target.id);
+            await syncDependencies.google.deleteEvent(userId, calendarId, target.id, target.etag || undefined);
+            removedIds.add(target.id);
             result.deleted++;
           }
           if (record) await syncDependencies.db.syncRecord.update({ where: { id: record.id }, data: {
             syncStatus: 'deleted', syncAction: 'delete', lastError: null, lastSyncedAt: new Date(),
           } });
+          reconciled.set(rowId, null);
           continue;
         }
         if (!target || claimed.has(target.id!)) {
@@ -150,6 +158,7 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
             result.updated++;
             action = 'update';
           } else if (record?.syncStatus === 'synced' && record.inputHash === hash && record.googleEventId === eventId) {
+            reconciled.set(rowId, { eventId, data: eventData });
             continue; // No Calendar write and no per-row database write for unchanged rows.
           }
         } else {
@@ -164,6 +173,7 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
           where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
           create: { syncConfigId: configId, smartsheetRowId: rowId, ...data }, update: data,
         });
+        reconciled.set(rowId, { eventId, data: eventData });
       } catch (error: any) {
         result.failed++;
         result.errors.push({ rowId, error: error.message });
@@ -187,8 +197,9 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
       try {
         const event = record.googleEventId ? byId.get(record.googleEventId) : undefined;
         const tags = event?.extendedProperties?.private;
-        if (event?.id && !claimed.has(event.id) && tags?.smartsheetSheetId === sheetId && tags.smartsheetRowId === record.smartsheetRowId) {
-          await syncDependencies.google.deleteEvent(userId, calendarId, event.id);
+        if (event?.id && !event.recurrence && !event.recurringEventId && !claimed.has(event.id) && tags?.smartsheetSheetId === sheetId && tags.smartsheetRowId === record.smartsheetRowId) {
+          await syncDependencies.google.deleteEvent(userId, calendarId, event.id, event.etag || undefined);
+          removedIds.add(event.id);
         }
         await syncDependencies.db.syncRecord.update({ where: { id: record.id }, data: { syncStatus: 'deleted', syncAction: 'delete', lastError: null, lastSyncedAt: new Date() } });
         result.deleted++;
@@ -196,6 +207,26 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
         result.failed++;
         result.errors.push({ rowId: record.smartsheetRowId, error: error.message });
         await syncDependencies.db.syncRecord.update({ where: { id: record.id }, data: { syncStatus: 'failed', syncAction: 'delete', lastError: error.message } });
+      }
+    }
+    progress.stage = 'Removing surplus calendar entries';
+    const protectedIds = new Set([...claimed, ...removedIds]);
+    // Saved IDs for unresolved rows are protected even if old data has missing tags.
+    for (const record of records) {
+      if (rowIds.has(record.smartsheetRowId) && !reconciled.has(record.smartsheetRowId) && record.googleEventId) protectedIds.add(record.googleEventId);
+    }
+    const duplicates = planDuplicateCleanup(events, sheetId, rowIds, reconciled, protectedIds, timezone,
+      result.failed === 0 && reconciled.size === rowIds.size);
+    if (duplicates.length) logger.info(`Sync ${progress.runId}: removing ${duplicates.length} surplus calendar entries`);
+    for (const { event, rowId, reason } of duplicates) {
+      await renew();
+      try {
+        await syncDependencies.google.deleteEvent(userId, calendarId, event.id, event.etag || undefined);
+        result.deleted++;
+        logger.info(`Sync ${progress.runId}: removed duplicate ${event.id} for row ${rowId} (${reason})`);
+      } catch (error: any) {
+        result.failed++;
+        result.errors.push({ rowId, error: `Could not remove surplus calendar entry ${event.id}: ${error.message}` });
       }
     }
     await syncDependencies.db.syncConfiguration.update({ where: { id: configId }, data: { lastFullSyncAt: new Date() } });
