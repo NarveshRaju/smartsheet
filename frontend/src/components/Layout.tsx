@@ -38,6 +38,10 @@ export default function Layout({ children, authStatus }: LayoutProps) {
       <main className="app-main">
         <div className="main-container">{children}</div>
       </main>
+      <footer style={{ textAlign: 'center', padding: '24px', display: 'flex', justifyContent: 'center', gap: '24px', flexWrap: 'wrap' }}>
+        <a href="/privacy.html">Privacy Policy</a>
+        <a href="/terms.html">Terms of Service</a>
+      </footer>
     </div>
   );
 }
