@@ -90,6 +90,23 @@ export default function ConnectionDetailModal({
     }
   };
 
+  const handleForceUnlockAndSync = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    setSyncError(null);
+    try {
+      await api.unlockConnection(config.id);
+      const { result } = await api.syncConnection(config.id, setSyncProgress, true);
+      setSyncResult(result);
+      loadStatus();
+      onUpdated({ ...config, lastFullSyncAt: new Date().toISOString() });
+    } catch (err: any) {
+      setSyncError(err.message || 'Force sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleSaveMappingAndName = async () => {
     setSavingMapping(true);
     setSaveMessage(null);
@@ -229,7 +246,21 @@ export default function ConnectionDetailModal({
                 </div>
               )}
 
-              {syncError && <div className="alert alert-error"><strong>Sync Failed:</strong> {syncError}</div>}
+              {syncError && (
+                <div className="alert alert-error" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <div>
+                    <strong>Sync Failed:</strong> {syncError}
+                  </div>
+                  <button
+                    className="btn btn-warning btn-sm"
+                    onClick={handleForceUnlockAndSync}
+                    disabled={syncing}
+                    title="Clear any existing lease lock and force sync immediately"
+                  >
+                    🔓 Release Lock & Force Sync
+                  </button>
+                </div>
+              )}
 
               {syncResult && (
                 <div className="sync-result" style={{ marginTop: '1rem' }}>

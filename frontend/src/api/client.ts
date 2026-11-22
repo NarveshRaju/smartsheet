@@ -64,13 +64,19 @@ export const api = {
   getConnectionStatus: (id: string) =>
     request<SyncStatus>('/api/sync/configs/' + id + '/status'),
 
+  unlockConnection: (id: string) =>
+    request<{ success: boolean; message: string }>('/api/sync/configs/' + id + '/unlock', {
+      method: 'POST',
+    }),
+
   syncConnection: async (
     configId: string,
-    onProgress?: (message: string) => void
+    onProgress?: (message: string) => void,
+    force: boolean = false
   ): Promise<{ result: SyncResult }> => {
     onProgress?.('Initiating synchronization…');
     const { runId } = await request<{ runId: string }>(
-      '/api/sync/configs/' + configId + '/full',
+      '/api/sync/configs/' + configId + '/full' + (force ? '?force=true' : ''),
       { method: 'POST' }
     );
     const deadline = Date.now() + 15 * 60 * 1000;

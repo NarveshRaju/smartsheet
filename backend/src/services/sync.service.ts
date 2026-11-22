@@ -35,6 +35,14 @@ export async function fullSync(configId: string): Promise<SyncResult> {
   finally { activeSyncMap.delete(configId); }
 }
 
+export async function unlockSyncLease(configId: string): Promise<void> {
+  activeSyncMap.delete(configId);
+  await syncDependencies.db.syncConfiguration.updateMany({
+    where: { id: configId },
+    data: { syncLeaseOwner: null, syncLeaseUntil: null },
+  });
+}
+
 export function startFullSync(configId: string) {
   void fullSync(configId).catch(() => { /* Recorded in run progress and logs. */ });
   return currentRun(configId)!;
@@ -48,16 +56,16 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
       { syncLeaseUntil: null }, { syncLeaseUntil: { isSet: false } },
       { syncLeaseUntil: { lt: new Date() } },
     ] },
-    data: { syncLeaseOwner: owner, syncLeaseUntil: new Date(Date.now() + 600_000) },
+    data: { syncLeaseOwner: owner, syncLeaseUntil: new Date(Date.now() + 90_000) },
   });
   if (!lease.count) throw Object.assign(new Error('Sync is already running; the next scheduled run will catch up.'), { statusCode: 409 });
   const result = emptyResult();
   let renewedAt = Date.now();
   const renew = async () => {
-    if (Date.now() - renewedAt < 30_000) return;
+    if (Date.now() - renewedAt < 20_000) return;
     const renewed = await syncDependencies.db.syncConfiguration.updateMany({
       where: { id: configId, syncLeaseOwner: owner, syncLeaseUntil: { gt: new Date() } },
-      data: { syncLeaseUntil: new Date(Date.now() + 600_000) },
+      data: { syncLeaseUntil: new Date(Date.now() + 90_000) },
     });
     if (!renewed.count) throw new Error('Sync lease expired; retry on next run');
     renewedAt = Date.now();

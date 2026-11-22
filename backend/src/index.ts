@@ -134,6 +134,15 @@ app.listen(PORT, '0.0.0.0', () => {
   logger.info(`🕐 Default timezone: ${env.DEFAULT_TIMEZONE}`);
   logger.info(`🤖 Groq AI Curation: ${isGroqConfigured() ? 'Active for complex rows' : 'Disabled (Add GROQ_API_KEY to activate)'}`);
 
+  // Clear any orphaned sync leases from prior server runs
+  import('./services/db.js').then(({ prisma }) => {
+    prisma.syncConfiguration.updateMany({
+      data: { syncLeaseOwner: null, syncLeaseUntil: null },
+    }).then(res => {
+      if (res.count > 0) logger.info(`🔓 Reset ${res.count} stale sync lease(s) on startup`);
+    }).catch(() => {});
+  });
+
   // Start periodic background auto-sync worker (guaranteed fallback for sheet updates)
   startAutoSyncWorker();
 });

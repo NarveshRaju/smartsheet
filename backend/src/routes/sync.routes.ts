@@ -274,6 +274,7 @@ router.post('/configs/:id/full', syncLimiter, async (req: Request, res: Response
   try {
     const userId = req.session.userId!;
     const id = req.params.id as string;
+    const force = req.query.force === 'true' || req.body?.force === true;
 
     const config = await prisma.syncConfiguration.findFirst({
       where: { id, userId },
@@ -284,8 +285,36 @@ router.post('/configs/:id/full', syncLimiter, async (req: Request, res: Response
       return;
     }
 
+    if (force) {
+      await syncService.unlockSyncLease(config.id);
+    }
+
     const run = syncService.startFullSync(config.id);
     res.status(202).json({ runId: run.runId, configId: config.id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Multi-Project: Force Unlock Connection Sync Lease ─────
+
+router.post('/configs/:id/unlock', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.session.userId!;
+    const id = req.params.id as string;
+
+    const config = await prisma.syncConfiguration.findFirst({
+      where: { id, userId },
+    });
+
+    if (!config) {
+      res.status(404).json({ error: 'Connection not found.' });
+      return;
+    }
+
+    await syncService.unlockSyncLease(config.id);
+    logger.info(`User ${userId} released sync lease for connection ${config.name || config.id}`);
+    res.json({ success: true, message: 'Sync lock released.' });
   } catch (error) {
     next(error);
   }
