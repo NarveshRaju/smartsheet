@@ -405,13 +405,27 @@ export function resolveRowColorId(
   const cellFormatColor = mapSmartsheetFormatToColor(cellFormat);
   if (cellFormatColor) return cellFormatColor;
 
-  // 1c. Value keywords (e.g. "Upcoming Event", "Promo Slide", "yellow", etc.)
+  // 1c. Value keywords (e.g. "Upcoming Event", "Promo Slide", "2x3 Signs", etc.)
   if (cellVal) {
     const kwColor = parseColorToGoogleColorId(cellVal, undefined);
     if (kwColor) return kwColor;
   }
 
-  // 1d. Row-level background color format
+  // 1d. If mapped color cell had no direct keyword match, check if a Category column provides the color family
+  if (row.cells) {
+    for (const cell of Object.values<any>(row.cells)) {
+      const colTitle = (cell?.columnTitle || '').toLowerCase();
+      if (colTitle.includes('category') && cell?.columnTitle !== colorCell?.columnTitle) {
+        const catVal = cell?.value?.toString() || cell?.displayValue;
+        if (catVal) {
+          const catColor = parseColorToGoogleColorId(catVal, cell?.format);
+          if (catColor) return catColor;
+        }
+      }
+    }
+  }
+
+  // 1e. Row-level background color format
   const rowFormatColor = mapSmartsheetFormatToColor(rowFormat);
   if (rowFormatColor) return rowFormatColor;
 

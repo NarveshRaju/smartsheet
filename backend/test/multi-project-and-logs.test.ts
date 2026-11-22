@@ -216,9 +216,23 @@ test('resolveRowColorId and inputHash accurately track cell, row, and cleared co
   // 1. Keyword / Subcategory
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Upcoming Event' } } }, mapping), '5');
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Promo Slide' } } }, mapping), '7');
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: '2x3 Signs' } } }, mapping), '2'); // Sage (Light Green)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Road Sign' } } }, mapping), '2');
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'App Home Feature' } } }, mapping), '7');
+
+  // 1b. Category fallback when subcategory has an unusual name
+  assert.equal(resolveRowColorId({
+    cells: {
+      subCategory: { value: 'Custom Foam Board Special' },
+      cat: { columnTitle: 'Category', value: 'Signage' }
+    }
+  }, mapping), '2');
 
   // 2. Cell format background color (27 = Red Tomato)
   assert.equal(resolveRowColorId({ cells: { subCategory: { format: ',,,,,,,,,27,,,,,,' } } }, mapping), '11');
+
+  // 2b. Cell format object with conditionalFormat (14 = Soft Green Sage)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { format: { conditionalFormat: ',,,,,,,,,14,,,,,,' } } } }, mapping), '2');
 
   // 3. Row format background color (21 = Yellow Banana)
   assert.equal(resolveRowColorId({ format: ',,,,,,,,,21,,,,,,', cells: { subCategory: {} } }, mapping), '5');

@@ -61,62 +61,92 @@ export function matchHexToGoogleColor(hexStr: string): string | undefined {
  * Common color name and subcategory keyword mapping
  */
 const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
-  // 5: Banana / Yellow (e.g. Upcoming Events, Newsletter)
+  // 2: Sage / Light Green / Mint (e.g. Signs, Signage, Posters, Physical Displays)
   {
     keywords: [
-      'upcoming event', 'upcoming', 'newsletter', 'newsletter feature mention',
+      '2x3 signs', '2x3 sign', 'signs', 'sign', 'signage', 'print', 'printed',
+      'yard signs', 'yard sign', 'road sign', 'road signs',
+      'marque sign', 'marquee sign', 'marque', 'marquee',
+      'restroom posters', 'restroom poster', 'posters', 'poster',
+      'banner', 'banners', 'decals/stickers', 'decals', 'decal', 'stickers', 'sticker',
+      'photo wall', 'backdrop', 'tension fabric', '3d tension fabric', 'fabric',
+      'standee', 'display', 'displays',
+      'sage', 'light green', 'mint', 'lime', 'spring green', 'light-green', 'green-light'
+    ],
+    colorId: '2'
+  },
+  // 5: Banana / Yellow (e.g. Upcoming Events, Newsletter, Email blasts)
+  {
+    keywords: [
+      'upcoming event', 'upcoming events', 'upcoming',
+      'newsletter feature mention', 'newsletter feature', 'newsletter mention',
+      'newsletter upcoming event', 'newsletter upcoming',
+      'newsletter graphic', 'newsletter graphics', 'newsletter',
+      'bulletin', 'email blast', 'eblast',
+      'men email', 'women email',
       'yellow', 'banana', 'gold', 'amber', 'caution', 'warning'
     ],
     colorId: '5'
   },
-  // 7: Peacock / Light Blue / Cyan (e.g. Promo Slides, Digital)
+  // 7: Peacock / Light Blue / Cyan (e.g. Promo Slides, Digital Displays, App)
   {
     keywords: [
-      'promo slide', 'promo', 'digital', 'slide', 'slides', 'peacock',
-      'cyan', 'light blue', 'sky blue', 'azure', 'aqua', 'teal'
+      'promo slide', 'promo slides', 'promo', 'promotion', 'promotional',
+      'app home feature', 'app feature', 'app', 'mobile app',
+      'lobby tvs', 'lobby tv', 'tv', 'tvs', 'screens', 'screen',
+      'digital', 'slide', 'slides',
+      'peacock', 'cyan', 'light blue', 'sky blue', 'azure', 'aqua', 'teal'
     ],
     colorId: '7'
   },
-  // 4: Flamingo / Pink / Coral (e.g. Events Page, Website)
+  // 4: Flamingo / Pink / Coral (e.g. Events Page, Website, Landing Pages)
   {
     keywords: [
-      'events page', 'events', 'website', 'page', 'flamingo',
-      'pink', 'light red', 'coral', 'salmon', 'rose', 'blush'
+      'events page', 'event page', 'events pages',
+      'landing page', 'landing pages',
+      'website', 'web page', 'webpages', 'web', 'site',
+      'events graphic', 'event graphic',
+      'ministry page', 'outreach page', 'page', 'pages',
+      'flamingo', 'pink', 'light red', 'coral', 'salmon', 'rose', 'blush'
     ],
     colorId: '4'
   },
-  // 6: Tangerine / Orange / Peach (e.g. Announcements)
+  // 6: Tangerine / Orange / Peach (e.g. Announcements, Stage Mentions)
   {
     keywords: [
-      'announcements', 'announcement', 'tangerine', 'orange', 'peach', 'apricot', 'bronze'
+      'announcement slide', 'announcements slide', 'announcement slides',
+      'live announcements', 'live announcement',
+      'stage announcements', 'stage announcement',
+      'announcements', 'announcement', 'stage mention', 'pulpit',
+      'tangerine', 'orange', 'peach', 'apricot', 'bronze'
     ],
     colorId: '6'
   },
-  // 2: Sage / Light Green / Mint (e.g. Restroom Posters, Signage)
+  // 8: Graphite / Gray (e.g. Social Media, Brand Identity, Online Profiles)
   {
     keywords: [
-      'restroom posters', 'posters', 'signage', 'print', 'sage',
-      'light green', 'mint', 'lime', 'spring green'
-    ],
-    colorId: '2'
-  },
-  // 8: Graphite / Gray (e.g. Social Media)
-  {
-    keywords: [
-      'social media', 'social', 'graphite', 'gray', 'grey', 'charcoal', 'slate', 'silver'
+      'social media graphic', 'social media graphics', 'social media', 'social',
+      'linktree insta', 'linktree services', 'linktree',
+      'instagram', 'insta', 'facebook', 'fb', 'twitter', 'tiktok', 'youtube', 'threads', 'linkedin',
+      'google biz profile', 'google biz', 'google business profile', 'biz profile',
+      'neighborhood groups/influencers', 'influencers', 'neighborhood groups',
+      'graphic identity',
+      'graphite', 'gray', 'grey', 'charcoal', 'slate', 'silver'
     ],
     colorId: '8'
   },
   // 9: Blueberry / Dark Blue / Navy
   {
     keywords: [
-      'internal', 'meeting', 'blueberry', 'blue', 'dark blue', 'navy', 'cobalt', 'indigo'
+      'internal', 'meeting', 'service', 'services', 'volunteer', 'serve', 'staff',
+      'blueberry', 'blue', 'dark blue', 'navy', 'cobalt', 'indigo'
     ],
     colorId: '9'
   },
   // 10: Basil / Dark Green
   {
     keywords: [
+      'environment', 'facilities', 'finance', 'giving', 'stewardship',
       'basil', 'green', 'dark green', 'forest green', 'emerald', 'olive'
     ],
     colorId: '10'
@@ -124,13 +154,15 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
   // 11: Tomato / Red (Urgent / Cancelled)
   {
     keywords: [
-      'urgent', 'critical', 'cancel', 'cancelled', 'tomato', 'red', 'crimson', 'ruby', 'alert'
+      'urgent', 'critical', 'cancel', 'cancelled', 'deadline', 'important',
+      'tomato', 'red', 'crimson', 'ruby', 'alert'
     ],
     colorId: '11'
   },
   // 3: Grape / Purple / Violet
   {
     keywords: [
+      'youth', 'kids', 'children', 'students', 'high school', 'hs', 'middle school', 'camp',
       'grape', 'purple', 'violet', 'magenta', 'plum', 'eggplant'
     ],
     colorId: '3'
@@ -138,6 +170,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
   // 1: Lavender / Light Purple
   {
     keywords: [
+      'worship', 'music', 'choir', 'creative', 'art', 'production',
       'lavender', 'lilac', 'light purple', 'periwinkle'
     ],
     colorId: '1'
@@ -204,19 +237,51 @@ export const SMARTSHEET_PALETTE_TO_GCAL: Record<number, string> = {
 };
 
 /**
- * Map Smartsheet cell format string (index 9 is bg_color) to Google Calendar colorId
+ * Map Smartsheet cell format string or object (index 9 is bg_color) to Google Calendar colorId
  */
-export function mapSmartsheetFormatToColor(formatStr?: string | null): string | undefined {
-  if (!formatStr) return undefined;
-  const parts = formatStr.split(',');
-  if (parts.length < 10) return undefined;
+export function mapSmartsheetFormatToColor(formatInput?: any): string | undefined {
+  if (!formatInput) return undefined;
 
-  const bgIndex = parseInt(parts[9], 10);
-  if (isNaN(bgIndex) || bgIndex <= 0 || bgIndex === 2 || bgIndex === 3) {
-    return undefined; // 0=none, 2=white, 3=transparent
+  let formatStr: string | undefined;
+  if (typeof formatInput === 'string') {
+    formatStr = formatInput;
+  } else if (typeof formatInput === 'object') {
+    formatStr = formatInput.conditionalFormat || formatInput.format || formatInput.value;
   }
 
-  return SMARTSHEET_PALETTE_TO_GCAL[bgIndex];
+  if (!formatStr || typeof formatStr !== 'string') return undefined;
+
+  const parts = formatStr.split(',');
+  if (parts.length < 9) return undefined;
+
+  // 1. Check background color (position 9)
+  if (parts.length > 9) {
+    const bgIndex = parseInt(parts[9], 10);
+    if (!isNaN(bgIndex) && bgIndex > 0 && bgIndex !== 2 && bgIndex !== 3) {
+      const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[bgIndex];
+      if (gcalColor) return gcalColor;
+    }
+  }
+
+  // 2. Check taskbar color (position 10)
+  if (parts.length > 10) {
+    const tbIndex = parseInt(parts[10], 10);
+    if (!isNaN(tbIndex) && tbIndex > 0 && tbIndex !== 2 && tbIndex !== 3) {
+      const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[tbIndex];
+      if (gcalColor) return gcalColor;
+    }
+  }
+
+  // 3. Check text color (position 8) if set and not black (1) or white (2)
+  if (parts.length > 8) {
+    const textIndex = parseInt(parts[8], 10);
+    if (!isNaN(textIndex) && textIndex > 1 && textIndex !== 2 && textIndex !== 3) {
+      const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[textIndex];
+      if (gcalColor) return gcalColor;
+    }
+  }
+
+  return undefined;
 }
 
 /**

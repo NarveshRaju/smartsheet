@@ -142,14 +142,14 @@ export async function getSheetRows(userId: string, sheetId: string) {
             value: cell.value,
             displayValue: cell.displayValue,
             columnTitle: col.title,
-            format: cell.format,
+            format: cell.format || cell.conditionalFormat || (typeof cell.format === 'object' ? cell.format?.conditionalFormat : undefined),
           };
         }
       }
       return {
         id: row.id.toString(),
         rowNumber: row.rowNumber,
-        format: row.format,
+        format: row.format || row.conditionalFormat || (typeof row.format === 'object' ? row.format?.conditionalFormat : undefined),
         cells,
         modifiedAt: row.modifiedAt,
       };
@@ -176,14 +176,14 @@ export async function getRow(userId: string, sheetId: string, rowId: string) {
           value: cell.value,
           displayValue: cell.displayValue,
           columnTitle: col.title,
-          format: cell.format,
+          format: cell.format || cell.conditionalFormat || (typeof cell.format === 'object' ? cell.format?.conditionalFormat : undefined),
         };
       }
     }
     return {
       id: row.id.toString(),
       rowNumber: row.rowNumber,
-      format: row.format,
+      format: row.format || row.conditionalFormat || (typeof row.format === 'object' ? row.format?.conditionalFormat : undefined),
       cells,
       modifiedAt: row.modifiedAt,
     };
