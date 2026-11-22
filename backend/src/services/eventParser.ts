@@ -57,7 +57,21 @@ function parseDateComponents(dStr: string): { year: number; month: number; day: 
     return { year, month: first, day: second };
   }
 
-  // 3. Fallback standard date parse
+  // 3. US 2-digit: MM/DD/YY or M/D/YY (e.g. 01/05/27 or 12/27/26)
+  const us2Match = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?:\D|$)/);
+  if (us2Match) {
+    const first = parseInt(us2Match[1], 10);
+    const second = parseInt(us2Match[2], 10);
+    let year = parseInt(us2Match[3], 10);
+    year = year < 70 ? 2000 + year : 1900 + year;
+
+    if (first > 12) {
+      return { year, month: second, day: first };
+    }
+    return { year, month: first, day: second };
+  }
+
+  // 4. Fallback standard date parse
   const d = new Date(s);
   if (!isNaN(d.getTime())) {
     return {
@@ -95,14 +109,13 @@ function parseSmartsheetDateTime(
   dateStr?: string,
   timeStr?: string,
   defaultHour: number = 9,
-  defaultMinute: number = 0
+  defaultMinute: number = 0,
+  fallbackToAllDay: boolean = false
 ): ParsedDateTimeResult | null {
   if (!dateStr || !dateStr.trim()) return null;
 
   const dStr = dateStr.trim();
   const tStr = timeStr ? timeStr.trim() : '';
-
-  const isAllDay = isAllDayIndicator(tStr) || isAllDayIndicator(dStr);
 
   const dateComponents = parseDateComponents(dStr);
   if (!dateComponents) {
@@ -116,14 +129,6 @@ function parseSmartsheetDateTime(
   const d = String(day).padStart(2, '0');
   const dateOnly = `${y}-${m}-${d}`;
 
-  if (isAllDay) {
-    return {
-      dateOnly,
-      hasTime: false,
-      isAllDay: true,
-    };
-  }
-
   // Extract time from timeStr or embedded in dateStr
   let timeComponents = parseTimeComponents(tStr);
   if (!timeComponents) {
@@ -134,6 +139,16 @@ function parseSmartsheetDateTime(
   }
 
   const hasTime = Boolean(timeComponents);
+  const isAllDay = isAllDayIndicator(tStr) || isAllDayIndicator(dStr) || (!hasTime && fallbackToAllDay);
+
+  if (isAllDay) {
+    return {
+      dateOnly,
+      hasTime: false,
+      isAllDay: true,
+    };
+  }
+
   const hour = timeComponents ? timeComponents.hour : defaultHour;
   const minute = timeComponents ? timeComponents.minute : defaultMinute;
   const second = timeComponents ? timeComponents.second : 0;
@@ -242,20 +257,25 @@ function mapRowToEventStandard(
 
   // 1. Start Date is strictly mandatory
   if (!startDateStr || !startDateStr.trim()) {
-    logger.debug(`Row ${row.id}: Start date is blank (both date and time are mandatory), skipping calendar sync`);
+    logger.debug(`Row ${row.id}: Start date is blank, skipping calendar sync`);
     return null;
   }
 
-  // 2. Start Time is strictly mandatory (must have explicit non-empty time or embedded time/all-day)
+  // 2. Start Time check:
+  // If a start time column was configured in mapping, require explicit time / embedded time / all-day.
+  // If no start time column was configured, default to an all-day event.
+  const hasConfiguredStartTime = Boolean(columnMapping.startTime && columnMapping.startTime.trim().length > 0);
   const hasExplicitStartTime = Boolean(startTimeStr && startTimeStr.trim().length > 0);
-  const dateHasEmbeddedTime = /\d{1,2}:\d{2}/.test(startDateStr.trim()) || isAllDayIndicator(startDateStr.trim());
+  const dateHasEmbeddedTime = /\d{1,2}:\d{2}/.test(startDateStr.trim());
+  const isExplicitAllDay = isAllDayIndicator(startTimeStr) || isAllDayIndicator(startDateStr);
 
-  if (!hasExplicitStartTime && !dateHasEmbeddedTime) {
-    logger.debug(`Row ${row.id}: Start time is blank (both start date and start time are mandatory), skipping calendar sync`);
+  if (hasConfiguredStartTime && !hasExplicitStartTime && !dateHasEmbeddedTime && !isExplicitAllDay) {
+    logger.debug(`Row ${row.id}: Start time is blank (configured start time column is empty), skipping calendar sync`);
     return null;
   }
 
-  const startParsed = parseSmartsheetDateTime(startDateStr, startTimeStr, 9, 0);
+  const fallbackToAllDay = !hasConfiguredStartTime;
+  const startParsed = parseSmartsheetDateTime(startDateStr, startTimeStr, 9, 0, fallbackToAllDay);
   if (!startParsed) {
     logger.debug(`Row ${row.id}: Invalid start date "${startDateStr}", skipping`);
     return null;
@@ -267,7 +287,7 @@ function mapRowToEventStandard(
     return null;
   }
 
-  let endParsed = parseSmartsheetDateTime(endDateStr || startDateStr, endTimeStr, 10, 0);
+  let endParsed = parseSmartsheetDateTime(endDateStr || startDateStr, endTimeStr, 10, 0, fallbackToAllDay);
 
   let event: CalendarEventData;
 
@@ -276,6 +296,10 @@ function mapRowToEventStandard(
     let endDateOnly = endParsed?.dateOnly || startParsed.dateOnly;
     if (endDateOnly <= startParsed.dateOnly) {
       endDateOnly = addDaysToDateString(startParsed.dateOnly, 1);
+    } else {
+      // In Smartsheet, a date range like 01/05/27 to 01/07/27 is inclusive.
+      // In Google Calendar API, end.date is exclusive. So add 1 day to make it cover through the end date.
+      endDateOnly = addDaysToDateString(endDateOnly, 1);
     }
     event = {
       summary: title,
@@ -361,9 +385,15 @@ export async function mapRowToEvent(
   const title = value(columnMapping.title);
   const start = value(columnMapping.startDate);
   const time = value(columnMapping.startTime);
-  if (!title || !start || (!time && !/T\d{2}:\d{2}/.test(start) && !isAllDayIndicator(start))) return null;
-  const isoDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
-  const simpleTime = (v: string) => isAllDayIndicator(v) || /^(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(v) || /^(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:am|pm)$/i.test(v);
+  if (!title || !start) return null;
+
+  // If a start time column was configured in mapping, but this row has an empty time value,
+  // and start has no embedded time and is not all-day, skip it (preserves explicit requirement when mapped)
+  const hasConfiguredStartTime = Boolean(columnMapping.startTime && columnMapping.startTime.trim().length > 0);
+  if (hasConfiguredStartTime && !time && !/T\d{2}:\d{2}/.test(start) && !isAllDayIndicator(start)) {
+    return null;
+  }
+
   const endDate = value(columnMapping.endDate);
   const endTime = value(columnMapping.endTime);
 
@@ -373,10 +403,14 @@ export async function mapRowToEvent(
     const startTime = normalize(start);
     const end = endDate ? normalize(endDate) : new Date(Date.parse(/Z$|[+-]\d{2}:\d{2}$/.test(startTime) ? startTime : startTime + 'Z') + 3600000).toISOString().replace('.000Z', /Z$|[+-]\d{2}:\d{2}$/.test(startTime) ? 'Z' : '');
     event = validateAiEvent({ ...mapRowToEventStandard(row, columnMapping, timezone), summary: title, start: { dateTime: startTime }, end: { dateTime: end } }, timezone);
-  } else if (isoDate(start) && simpleTime(time) && (!endDate || isoDate(endDate)) && (!endTime || simpleTime(endTime))) {
-    event = mapRowToEventStandard(row, columnMapping, timezone);
   } else {
-    event = await curateEventWithGroq(row, columnMapping, timezone);
+    // Try standard algorithmic parsing first (covers ISO dates, US dates, all-day, timed)
+    const standardEvent = mapRowToEventStandard(row, columnMapping, timezone);
+    if (standardEvent) {
+      event = standardEvent;
+    } else {
+      event = await curateEventWithGroq(row, columnMapping, timezone);
+    }
   }
 
   if (event && columnMapping.color) {

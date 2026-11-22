@@ -194,3 +194,58 @@ test('sameEvent and buildCalendarPatch respect colorId', () => {
   const patch = buildCalendarPatch({ ...baseEvent, colorId: '5' });
   assert.equal(patch.colorId, '5');
 });
+
+test('mapRowToEvent creates all-day events when startTime column is unmapped, supporting 2-digit years and ranges', async () => {
+  const rowPromoSingleDay = {
+    id: 'row-promo-1',
+    cells: {
+      title: { value: 'Communion - Newsletter Upcoming Event' },
+      promoStart: { value: '01/05/27' },
+      promoEnd: { value: '01/05/27' },
+      subCategory: { value: 'Upcoming Event' },
+    },
+  };
+
+  const promoMapping = {
+    title: 'title',
+    startDate: 'promoStart',
+    endDate: 'promoEnd',
+    color: 'subCategory',
+  };
+
+  const event1 = await mapRowToEvent(rowPromoSingleDay, promoMapping, 'Asia/Kolkata');
+  assert.ok(event1, 'Event should be created for date-only row without startTime mapped');
+  assert.equal(event1.summary, 'Communion - Newsletter Upcoming Event');
+  assert.equal(event1.start.date, '2027-01-05');
+  assert.equal(event1.end.date, '2027-01-06'); // 1 day event in Google Calendar API has next-day exclusive end
+  assert.equal(event1.colorId, '5'); // Banana / Yellow for Upcoming Event
+
+  // Multi-day range (e.g. 12/27/26 to 01/03/27)
+  const rowPromoMultiDay = {
+    id: 'row-promo-2',
+    cells: {
+      title: { value: 'Communion - Promo Slide' },
+      promoStart: { value: '12/27/26' },
+      promoEnd: { value: '01/03/27' },
+      subCategory: { value: 'Promo Slide' },
+    },
+  };
+
+  const event2 = await mapRowToEvent(rowPromoMultiDay, promoMapping, 'Asia/Kolkata');
+  assert.ok(event2);
+  assert.equal(event2.summary, 'Communion - Promo Slide');
+  assert.equal(event2.start.date, '2026-12-27');
+  assert.equal(event2.end.date, '2027-01-04'); // Dec 27 through Jan 3 inclusive -> Jan 4 exclusive
+  assert.equal(event2.colorId, '7'); // Peacock
+
+  // Blank start date (e.g. header rows like 'INSTRUCTIONS' or 'JANUARY') is safely skipped
+  const headerRow = {
+    id: 'header-row',
+    cells: {
+      title: { value: 'JANUARY' },
+      promoStart: { value: '' },
+    },
+  };
+  const headerEvent = await mapRowToEvent(headerRow, promoMapping, 'Asia/Kolkata');
+  assert.equal(headerEvent, null, 'Header row without start date must return null');
+});
