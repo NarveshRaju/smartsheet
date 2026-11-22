@@ -253,6 +253,49 @@ export async function retrySyncRecord(recordId: string): Promise<void> {
   if (failed) throw new Error(failed.error);
 }
 
+export async function retryAllFailedRecords(configId: string): Promise<SyncResult> {
+  await syncDependencies.db.syncRecord.updateMany({
+    where: { syncConfigId: configId, syncStatus: 'failed' },
+    data: { nextRetryAt: null },
+  });
+  return fullSync(configId);
+}
+
+export async function getAllConfigsWithStats(userId: string) {
+  const configs = await syncDependencies.db.syncConfiguration.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const results = await Promise.all(
+    configs.map(async (config) => {
+      const [total, synced, failed, pending, deleted] = await Promise.all([
+        syncDependencies.db.syncRecord.count({ where: { syncConfigId: config.id } }),
+        syncDependencies.db.syncRecord.count({ where: { syncConfigId: config.id, syncStatus: 'synced' } }),
+        syncDependencies.db.syncRecord.count({ where: { syncConfigId: config.id, syncStatus: 'failed' } }),
+        syncDependencies.db.syncRecord.count({ where: { syncConfigId: config.id, syncStatus: 'pending' } }),
+        syncDependencies.db.syncRecord.count({ where: { syncConfigId: config.id, syncStatus: 'deleted' } }),
+      ]);
+      return {
+        id: config.id,
+        name: (config as any).name || null,
+        sheetName: config.sheetName,
+        calendarName: config.calendarName,
+        smartsheetSheetId: config.smartsheetSheetId,
+        googleCalendarId: config.googleCalendarId,
+        columnMapping: config.columnMapping,
+        isEnabled: config.isEnabled,
+        lastFullSyncAt: config.lastFullSyncAt,
+        createdAt: config.createdAt,
+        updatedAt: config.updatedAt,
+        stats: { total, synced, failed, pending, deleted },
+      };
+    })
+  );
+
+  return results;
+}
+
 export async function getSyncStatus(configId: string) {
   const config = await syncDependencies.db.syncConfiguration.findUnique({
     where: { id: configId },
@@ -283,10 +326,16 @@ export async function getSyncStatus(configId: string) {
   return {
     config: {
       id: config.id,
+      name: (config as any).name || null,
       sheetName: config.sheetName,
       calendarName: config.calendarName,
+      smartsheetSheetId: config.smartsheetSheetId,
+      googleCalendarId: config.googleCalendarId,
+      columnMapping: config.columnMapping,
       isEnabled: config.isEnabled,
       lastFullSyncAt: config.lastFullSyncAt,
+      createdAt: config.createdAt,
+      updatedAt: config.updatedAt,
     },
     stats: { total, synced, failed, pending, deleted },
     failedRecords,

@@ -38,6 +38,7 @@ model OAuthAccount {
 model SyncConfiguration {
   id                String       @id @default(uuid()) @map("_id")
   userId            String
+  name              String?
   smartsheetSheetId String
   sheetName         String?
   googleCalendarId  String

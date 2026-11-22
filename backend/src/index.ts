@@ -15,6 +15,7 @@ import googleRoutes from './routes/google.routes.js';
 import smartsheetRoutes from './routes/smartsheet.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import webhookRoutes from './routes/webhook.routes.js';
+import logRoutes from './routes/log.routes.js';
 import { startAutoSyncWorker } from './services/sync.service.js';
 import { isGroqConfigured } from './services/groq.service.js';
 
@@ -88,6 +89,7 @@ app.use('/webhooks', webhookRoutes);
 app.use('/api/google', apiLimiter, googleRoutes);
 app.use('/api/smartsheet', apiLimiter, smartsheetRoutes);
 app.use('/api/sync', apiLimiter, syncRoutes);
+app.use('/api/logs', apiLimiter, logRoutes);
 
 // ── Serve React Frontend in Production ─────────────────────
 

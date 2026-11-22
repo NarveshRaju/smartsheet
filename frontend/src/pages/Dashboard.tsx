@@ -2,119 +2,110 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client.js';
 import Layout from '../components/Layout.js';
 import ConnectionCard from '../components/ConnectionCard.js';
-import SheetSelector from '../components/SheetSelector.js';
-import CalendarSelector from '../components/CalendarSelector.js';
-import ColumnMapping from '../components/ColumnMapping.js';
-import SyncControls from '../components/SyncControls.js';
-import SyncStats from '../components/SyncStats.js';
-import ErrorList from '../components/ErrorList.js';
-import type { AuthStatus, SyncConfig, SyncStatus, ColumnMapping as CMType, Sheet, Calendar } from '../types/index.js';
+import ConnectionsManager from '../components/ConnectionsManager.js';
+import NewConnectionModal from '../components/NewConnectionModal.js';
+import ConnectionDetailModal from '../components/ConnectionDetailModal.js';
+import LogViewer from '../components/LogViewer.js';
+import type { AuthStatus, SyncConfig } from '../types/index.js';
 
 export default function Dashboard() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
-  const [syncConfig, setSyncConfig] = useState<SyncConfig | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [configs, setConfigs] = useState<SyncConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState<string | null>(null);
-  const [selectedSheetId, setSelectedSheetId] = useState('');
-  const [selectedSheetName, setSelectedSheetName] = useState('');
-  const [selectedCalendarId, setSelectedCalendarId] = useState('');
-  const [selectedCalendarName, setSelectedCalendarName] = useState('');
-  const [columnMapping, setColumnMapping] = useState<CMType>({});
+  const [activeTab, setActiveTab] = useState<'connections' | 'logs'>('connections');
+
+  // Modals state
+  const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [selectedConfigForModal, setSelectedConfigForModal] = useState<SyncConfig | null>(null);
+  const [logsInitialConfigId, setLogsInitialConfigId] = useState<string>('');
 
   const loadData = useCallback(async () => {
     try {
-      const [auth, config, status] = await Promise.all([
+      const [auth, configsData] = await Promise.all([
         api.getAuthStatus(),
-        api.getSyncConfig().catch(() => ({ config: null })),
-        api.getSyncStatus().catch(() => null),
+        api.getSyncConfigs().catch(() => ({ configs: [] })),
       ]);
       setAuthStatus(auth);
-      setSyncConfig(config.config);
-      setSyncStatus(status);
-      if (config.config) {
-        setSelectedSheetId(config.config.smartsheetSheetId);
-        setSelectedSheetName(config.config.sheetName || '');
-        setSelectedCalendarId(config.config.googleCalendarId);
-        setSelectedCalendarName(config.config.calendarName || '');
-        setColumnMapping(config.config.columnMapping);
-      }
-    } catch (err) { console.error('Failed to load:', err); }
-    finally { setLoading(false); }
+      setConfigs(configsData.configs || []);
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    if (p.get('auth') || p.get('error')) { window.history.replaceState({}, '', '/'); loadData(); }
+    loadData();
   }, [loadData]);
 
-  const handleSave = async () => {
-    setSaving(true); setSaveMsg(null);
-    try {
-      const data = { smartsheetSheetId: selectedSheetId, sheetName: selectedSheetName,
-        googleCalendarId: selectedCalendarId, calendarName: selectedCalendarName, columnMapping };
-      const { config } = syncConfig ? await api.updateSyncConfig(data) : await api.createSyncConfig(data);
-      setSyncConfig(config);
-      setSaveMsg('Configuration saved!'); setTimeout(() => setSaveMsg(null), 3000);
-    } catch (err: any) { setSaveMsg('Error: ' + err.message); }
-    finally { setSaving(false); }
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('auth') || p.get('error')) {
+      window.history.replaceState({}, '', '/');
+      loadData();
+    }
+  }, [loadData]);
+
+  const handleConnectionCreated = (newConfig: SyncConfig) => {
+    setConfigs((prev) => [newConfig, ...prev]);
+    loadData();
   };
 
-  const handleResetSync = async () => {
-    if (!confirm('Are you sure you want to unsync and reset your configuration? This will remove existing sync mappings and allow you to configure a fresh sync between a new sheet and calendar.')) {
-      return;
-    }
-    setSaving(true); setSaveMsg(null);
-    try {
-      await api.resetSyncConfig();
-      setSyncConfig(null);
-      setSelectedSheetId('');
-      setSelectedSheetName('');
-      setSelectedCalendarId('');
-      setSelectedCalendarName('');
-      setColumnMapping({});
-      setSyncStatus(null);
-      setSaveMsg('Sync configuration reset successfully. You can now configure a new sync!');
-      setTimeout(() => setSaveMsg(null), 4000);
-    } catch (err: any) {
-      setSaveMsg('Error resetting sync: ' + err.message);
-    } finally {
-      setSaving(false);
+  const handleConnectionUpdated = (updatedConfig: SyncConfig) => {
+    setConfigs((prev) =>
+      prev.map((c) => (c.id === updatedConfig.id ? { ...c, ...updatedConfig } : c))
+    );
+    if (selectedConfigForModal?.id === updatedConfig.id) {
+      setSelectedConfigForModal((prev) => (prev ? { ...prev, ...updatedConfig } : null));
     }
   };
 
-  const handleToggle = async (enabled: boolean) => {
-    try { const { config } = await api.updateSyncConfig({ isEnabled: enabled }); setSyncConfig(config); }
-    catch (err: any) { console.error('Toggle failed:', err); }
+  const handleConnectionDeleted = (deletedId: string) => {
+    setConfigs((prev) => prev.filter((c) => c.id !== deletedId));
+    if (selectedConfigForModal?.id === deletedId) {
+      setSelectedConfigForModal(null);
+    }
   };
 
-  const handleSheetSelect = (s: Sheet) => { setSelectedSheetId(s.id); setSelectedSheetName(s.name); setColumnMapping({}); };
-  const handleCalSelect = (c: Calendar) => { setSelectedCalendarId(c.id!); setSelectedCalendarName(c.summary!); };
-  const refreshStatus = async () => { try { setSyncStatus(await api.getSyncStatus()); } catch {} };
+  const handleViewLogsForProject = (configId: string) => {
+    setLogsInitialConfigId(configId);
+    setActiveTab('logs');
+  };
 
-  if (loading) return (
-    <Layout authStatus={null}><div className="loading-screen"><div className="spinner spinner-lg" /><p>Loading dashboard...</p></div></Layout>
-  );
+  if (loading) {
+    return (
+      <Layout authStatus={null}>
+        <div className="loading-screen">
+          <div className="spinner spinner-lg" />
+          <p>Loading your project connections & sync engines…</p>
+        </div>
+      </Layout>
+    );
+  }
 
-  const both = authStatus?.google && authStatus?.smartsheet;
-  const hasSheet = Boolean(selectedSheetId);
-  const hasCalendar = Boolean(selectedCalendarId);
-  const hasTitle = Boolean(columnMapping.title);
-  const hasStartDate = Boolean(columnMapping.startDate);
-  const canSave = hasSheet && hasCalendar && hasTitle && hasStartDate;
+  const bothConnected = authStatus?.google && authStatus?.smartsheet;
+  const activeCount = configs.filter((c) => c.isEnabled).length;
 
   return (
     <Layout authStatus={authStatus}>
+      {/* ── Section 1: Account Connections ───────────────────── */}
       <section className="dashboard-section">
-        <h2 className="section-title"><span className="section-number">1</span>Connect Your Accounts</h2>
+        <div className="section-header-row">
+          <h2 className="section-title">
+            <span className="section-number">1</span>Connected Accounts & Authorizations
+          </h2>
+          {bothConnected && (
+            <span className="badge-connected-all">
+              ✓ Both Google Calendar & Smartsheet Connected
+            </span>
+          )}
+        </div>
         <div className="connections-grid">
           <ConnectionCard
             provider="google"
             connected={authStatus?.google || false}
             label="Google Calendar"
-            description="Connect to create and manage calendar events"
+            description="Manage and synchronize project events to target calendars"
             expiry={authStatus?.googleExpiry}
             onDisconnected={loadData}
           />
@@ -122,88 +113,102 @@ export default function Dashboard() {
             provider="smartsheet"
             connected={authStatus?.smartsheet || false}
             label="Smartsheet"
-            description="Connect to read sheets and receive webhooks"
+            description="Access sheets, extract schedules, and receive live webhooks"
             expiry={authStatus?.smartsheetExpiry}
             onDisconnected={loadData}
           />
         </div>
       </section>
 
-      {both && (
+      {/* ── Section 2: Multi-Project & Activity Hub ───────────── */}
+      {bothConnected ? (
         <section className="dashboard-section">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-            <h2 className="section-title" style={{ marginBottom: 0 }}>
-              <span className="section-number">2</span>Configure Sync
-            </h2>
-            {syncConfig && (
+          {/* Main Hub Tabs */}
+          <div className="hub-tabs-container">
+            <div className="hub-tabs">
               <button
-                className="btn btn-outline-danger btn-sm"
-                onClick={handleResetSync}
-                disabled={saving}
-                title="Clear current sync mapping and start fresh with a new sheet/calendar"
+                className={`hub-tab-btn ${activeTab === 'connections' ? 'active' : ''}`}
+                onClick={() => setActiveTab('connections')}
               >
-                🔄 Unsync & Reset Configuration
+                <span>🔗 Project Connections</span>
+                <span className="hub-tab-count">{configs.length}</span>
+                {activeCount > 0 && <span className="hub-tab-dot" title={`${activeCount} active`} />}
               </button>
-            )}
-          </div>
-          <div className="config-grid">
-            <SheetSelector selectedSheetId={selectedSheetId} onSelect={handleSheetSelect} />
-            <CalendarSelector selectedCalendarId={selectedCalendarId} onSelect={handleCalSelect} />
-          </div>
-          <ColumnMapping sheetId={selectedSheetId} mapping={columnMapping} onChange={setColumnMapping} />
-          <div className="config-actions">
-            <button className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving || !canSave}>
-              {saving ? 'Saving...' : syncConfig ? 'Update Configuration' : 'Save Configuration'}
-            </button>
-            {syncConfig && (
               <button
-                className="btn btn-ghost btn-lg"
-                onClick={handleResetSync}
-                disabled={saving}
+                className={`hub-tab-btn ${activeTab === 'logs' ? 'active' : ''}`}
+                onClick={() => {
+                  setLogsInitialConfigId('');
+                  setActiveTab('logs');
+                }}
               >
-                Reset & Re-establish New Sync
+                <span>📜 System & Sync Logs</span>
+                <span className="live-indicator-pill">Live Feed</span>
               </button>
-            )}
-            {saveMsg && <span className={'save-message ' + (saveMsg.startsWith('Error') ? 'error' : 'success')}>{saveMsg}</span>}
-            
-            <div className="validation-checklist">
-              <span className={'check-badge ' + (hasSheet ? 'valid' : 'invalid')}>
-                {hasSheet ? `✓ Sheet: ${selectedSheetName || selectedSheetId}` : '✗ Select a Smartsheet'}
-              </span>
-              <span className={'check-badge ' + (hasCalendar ? 'valid' : 'invalid')}>
-                {hasCalendar ? `✓ Calendar: ${selectedCalendarName || selectedCalendarId}` : '✗ Select a Google Calendar'}
-              </span>
-              <span className={'check-badge ' + (hasTitle ? 'valid' : 'invalid')}>
-                {hasTitle ? '✓ Event Title Mapped' : '✗ Map Event Title Column'}
-              </span>
-              <span className={'check-badge ' + (hasStartDate ? 'valid' : 'invalid')}>
-                {hasStartDate ? '✓ Start Date Mapped' : '✗ Map Start Date Column'}
-              </span>
+            </div>
+
+            <div className="hub-tab-actions">
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => setIsNewModalOpen(true)}
+              >
+                ➕ Link New Project
+              </button>
             </div>
           </div>
+
+          {/* ── Tab Content: Connections Manager ────────────── */}
+          {activeTab === 'connections' && (
+            <ConnectionsManager
+              configs={configs}
+              onOpenNewModal={() => setIsNewModalOpen(true)}
+              onSelectConfig={(config) => setSelectedConfigForModal(config)}
+              onRefresh={loadData}
+              onViewLogs={handleViewLogsForProject}
+              onUpdated={handleConnectionUpdated}
+              onDeleted={handleConnectionDeleted}
+            />
+          )}
+
+          {/* ── Tab Content: Live Logs & Monitor ────────────── */}
+          {activeTab === 'logs' && (
+            <div className="logs-tab-wrapper">
+              <div className="logs-tab-header">
+                <div>
+                  <h3 className="section-subtitle">Real-Time Sync Logs & System Events</h3>
+                  <p className="section-subtext">
+                    Monitor live Smartsheet webhooks, reconciliation runs, and event updates.
+                  </p>
+                </div>
+              </div>
+              <LogViewer configs={configs} initialConfigId={logsInitialConfigId} />
+            </div>
+          )}
         </section>
+      ) : (
+        <div className="auth-required-box">
+          <div className="auth-required-icon">🔒</div>
+          <h3>Connect Both Accounts to Manage Project Syncs</h3>
+          <p>
+            Please authorize both your <strong>Google Calendar</strong> and <strong>Smartsheet</strong>{' '}
+            accounts in Step 1 above to begin linking projects and monitoring live sync activity.
+          </p>
+        </div>
       )}
 
-      {syncConfig && (
-        <section className="dashboard-section">
-          <h2 className="section-title"><span className="section-number">3</span>Synchronize</h2>
-          <SyncControls
-            isEnabled={syncConfig.isEnabled}
-            hasConfig={!!syncConfig}
-            isAiConfigured={syncStatus?.isAiConfigured}
-            onToggleSync={handleToggle}
-            onSyncComplete={refreshStatus}
-          />
-        </section>
-      )}
+      {/* ── Modals ───────────────────────────────────────────── */}
+      <NewConnectionModal
+        isOpen={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        onCreated={handleConnectionCreated}
+      />
 
-      {syncStatus && (
-        <section className="dashboard-section">
-          <h2 className="section-title"><span className="section-number">4</span>Sync Status</h2>
-          <SyncStats stats={syncStatus.stats} lastFullSyncAt={syncStatus.config?.lastFullSyncAt} />
-          <ErrorList records={syncStatus.failedRecords} onRetryComplete={refreshStatus} />
-        </section>
-      )}
+      <ConnectionDetailModal
+        config={selectedConfigForModal}
+        isOpen={Boolean(selectedConfigForModal)}
+        onClose={() => setSelectedConfigForModal(null)}
+        onUpdated={handleConnectionUpdated}
+        onDeleted={handleConnectionDeleted}
+      />
     </Layout>
   );
 }
