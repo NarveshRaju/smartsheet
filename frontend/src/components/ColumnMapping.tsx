@@ -27,7 +27,30 @@ export default function ColumnMapping({ sheetId, mapping, onChange, disabled }: 
   const loadCols = async () => {
     if (!sheetId) return;
     setLoading(true); setError(null);
-    try { const { columns: c } = await api.getSheetColumns(sheetId); setColumns(c); }
+    try {
+      const { columns: c } = await api.getSheetColumns(sheetId);
+      setColumns(c);
+      if (c && c.length > 0 && Object.keys(mapping).length === 0) {
+        const auto: CMType = {};
+        for (const col of c) {
+          const lower = col.title.toLowerCase();
+          if (!auto.title && (lower.includes('event name') || lower.includes('title') || lower.includes('summary') || lower.includes('task name'))) {
+            auto.title = col.id;
+          } else if (!auto.startDate && (lower.includes('start date') || lower.includes('promo start') || lower === 'date')) {
+            auto.startDate = col.id;
+          } else if (!auto.endDate && (lower.includes('end date') || lower.includes('promo end'))) {
+            auto.endDate = col.id;
+          } else if (!auto.startTime && lower.includes('start time')) {
+            auto.startTime = col.id;
+          } else if (!auto.color && (lower.includes('sub-category') || lower.includes('subcategory') || lower.includes('color'))) {
+            auto.color = col.id;
+          }
+        }
+        if (Object.keys(auto).length > 0) {
+          onChange({ ...mapping, ...auto });
+        }
+      }
+    }
     catch (err: any) { setError(err.message); }
     finally { setLoading(false); }
   };

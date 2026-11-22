@@ -1,6 +1,6 @@
 import { curateEventWithGroq, validateAiEvent } from './groq.service.js';
 import { logger } from '../utils/logger.js';
-import { parseColorToGoogleColorId } from '../utils/colorMapper.js';
+import { parseColorToGoogleColorId, matchHexToGoogleColor, mapSmartsheetFormatToColor } from '../utils/colorMapper.js';
 import type { CalendarEventData, ColumnMapping } from '../types/index.js';
 
 
@@ -360,16 +360,76 @@ function mapRowToEventStandard(
     }
   }
 
-  const colorCell = columnMapping.color ? row.cells?.[columnMapping.color] : undefined;
-  if (colorCell) {
-    const colorVal = colorCell.value?.toString() || colorCell.displayValue;
-    const colorId = parseColorToGoogleColorId(colorVal, colorCell.format);
-    if (colorId) {
-      event.colorId = colorId;
-    }
+  const resolvedColorId = resolveRowColorId(row, columnMapping);
+  if (resolvedColorId !== undefined) {
+    event.colorId = resolvedColorId;
   }
 
   return sanitizeCalendarEventRange(event, timezone);
+}
+
+/**
+ * Resolves the Google Calendar colorId for a Smartsheet row.
+ * Returns:
+ * - string ('1'-'11') if a color is resolved from cell value, cell format, or row format
+ * - null if color column is configured in mapping, but this row has no color (cleared/uncolored)
+ * - undefined if color column is unmapped and no row/cell format is found (leaves calendar color untouched)
+ */
+export function resolveRowColorId(
+  row: any,
+  columnMapping: ColumnMapping
+): string | null | undefined {
+  // 1. If color column is configured in mapping:
+  if (columnMapping.color) {
+    const colorCell = row.cells?.[columnMapping.color];
+    const cellVal = colorCell?.value?.toString() || colorCell?.displayValue;
+    const cellFormat = colorCell?.format;
+    const rowFormat = row.format;
+
+    // 1a. Direct Google Color ID ('1'-'11') or Hex code in cell value
+    if (cellVal) {
+      const trimmed = cellVal.trim();
+      if (/^(?:[1-9]|1[01])$/.test(trimmed)) {
+        return trimmed;
+      }
+      if (/^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(trimmed)) {
+        const hexMatch = matchHexToGoogleColor(trimmed);
+        if (hexMatch) return hexMatch;
+      }
+    }
+
+    // 1b. Cell background fill color format (from Smartsheet formatting)
+    const cellFormatColor = mapSmartsheetFormatToColor(cellFormat);
+    if (cellFormatColor) return cellFormatColor;
+
+    // 1c. Value keywords (e.g. "Upcoming Event", "Promo Slide", "yellow", etc.)
+    if (cellVal) {
+      const kwColor = parseColorToGoogleColorId(cellVal, undefined);
+      if (kwColor) return kwColor;
+    }
+
+    // 1d. Row-level background color format
+    const rowFormatColor = mapSmartsheetFormatToColor(rowFormat);
+    if (rowFormatColor) return rowFormatColor;
+
+    // Explicit color column was mapped, but this row is empty/uncolored:
+    // Return null to clear any existing color in Google Calendar.
+    return null;
+  }
+
+  // 2. Fallback if color column is NOT mapped, but user colored the row or a cell in Smartsheet:
+  if (row.format) {
+    const rowColor = mapSmartsheetFormatToColor(row.format);
+    if (rowColor) return rowColor;
+  }
+
+  for (const cell of Object.values<any>(row.cells || {})) {
+    const cellColor = mapSmartsheetFormatToColor(cell?.format);
+    if (cellColor) return cellColor;
+  }
+
+  // Color column is unmapped and no Smartsheet format color is set
+  return undefined;
 }
 
 /**
@@ -413,14 +473,10 @@ export async function mapRowToEvent(
     }
   }
 
-  if (event && columnMapping.color) {
-    const colorCell = row.cells?.[columnMapping.color];
-    if (colorCell) {
-      const colorVal = colorCell.value?.toString() || colorCell.displayValue;
-      const colorId = parseColorToGoogleColorId(colorVal, colorCell.format);
-      if (colorId) {
-        event.colorId = colorId;
-      }
+  if (event) {
+    const resolvedColorId = resolveRowColorId(row, columnMapping);
+    if (resolvedColorId !== undefined) {
+      event.colorId = resolvedColorId;
     }
   }
 

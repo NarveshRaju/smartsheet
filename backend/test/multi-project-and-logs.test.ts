@@ -97,8 +97,8 @@ test('getAllConfigsWithStats aggregates stats across multiple configurations', a
 
 
 import { parseColorToGoogleColorId, matchHexToGoogleColor, mapSmartsheetFormatToColor } from '../src/utils/colorMapper.js';
-import { mapRowToEvent } from '../src/services/eventParser.js';
-import { sameEvent } from '../src/utils/eventIdentity.js';
+import { mapRowToEvent, resolveRowColorId } from '../src/services/eventParser.js';
+import { sameEvent, inputHash } from '../src/utils/eventIdentity.js';
 import { buildCalendarPatch } from '../src/utils/calendarPatch.js';
 
 test('colorMapper resolves color codes, names, subcategory text, and Smartsheet cell formats', () => {
@@ -174,7 +174,7 @@ test('mapRowToEvent assigns colorId when color column is mapped, and ignores whe
   assert.equal(parsedWithoutColor.colorId, undefined);
 });
 
-test('sameEvent and buildCalendarPatch respect colorId', () => {
+test('sameEvent and buildCalendarPatch respect colorId and color clearing', () => {
   const baseEvent: any = {
     summary: 'Meeting',
     start: { dateTime: '2026-10-15T09:00:00' },
@@ -190,9 +190,47 @@ test('sameEvent and buildCalendarPatch respect colorId', () => {
   // Match when desired specifies identical colorId
   assert.equal(sameEvent({ ...baseEvent, colorId: '5' }, { ...baseEvent, colorId: '5' }, 'UTC'), true);
 
+  // Mismatch when color is cleared in sheet (colorId: null) vs existing calendar color ('5')
+  assert.equal(sameEvent({ ...baseEvent, colorId: '5' }, { ...baseEvent, colorId: null }, 'UTC'), false);
+
+  // Match when both have no color
+  assert.equal(sameEvent({ ...baseEvent, colorId: undefined }, { ...baseEvent, colorId: null }, 'UTC'), true);
+
   // buildCalendarPatch includes colorId when specified
-  const patch = buildCalendarPatch({ ...baseEvent, colorId: '5' });
-  assert.equal(patch.colorId, '5');
+  const patchWithColor = buildCalendarPatch({ ...baseEvent, colorId: '5' });
+  assert.equal(patchWithColor.colorId, '5');
+
+  // buildCalendarPatch passes null when colorId is cleared to reset on Google Calendar
+  const patchCleared = buildCalendarPatch({ ...baseEvent, colorId: null });
+  assert.equal(patchCleared.colorId, null);
+});
+
+test('resolveRowColorId and inputHash accurately track cell, row, and cleared color changes', () => {
+  const mapping = { title: 'title', startDate: 'date', color: 'subCategory' };
+
+  // 1. Keyword / Subcategory
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Upcoming Event' } } }, mapping), '5');
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Promo Slide' } } }, mapping), '7');
+
+  // 2. Cell format background color
+  assert.equal(resolveRowColorId({ cells: { subCategory: { format: ',,,,,,,,,10,,,,,,' } } }, mapping), '11');
+
+  // 3. Row format background color
+  assert.equal(resolveRowColorId({ format: ',,,,,,,,,14,,,,,,', cells: { subCategory: {} } }, mapping), '5');
+
+  // 4. Cleared color (mapped column empty and no format) -> returns null to clear calendar color
+  assert.equal(resolveRowColorId({ cells: { subCategory: {} } }, mapping), null);
+
+  // 5. Unmapped color column with row format fallback
+  assert.equal(resolveRowColorId({ format: ',,,,,,,,,18,,,,,,', cells: {} }, { title: 'title', startDate: 'date' }), '7');
+
+  // 6. Unmapped color column with no color -> undefined
+  assert.equal(resolveRowColorId({ cells: {} }, { title: 'title', startDate: 'date' }), undefined);
+
+  // 7. inputHash changes when row.format changes
+  const rowA = { format: ',,,,,,,,,14,,,,,,', cells: { a: { value: 'test' } } };
+  const rowB = { format: ',,,,,,,,,10,,,,,,', cells: { a: { value: 'test' } } };
+  assert.notEqual(inputHash(rowA, mapping, 'UTC'), inputHash(rowB, mapping, 'UTC'));
 });
 
 test('mapRowToEvent creates all-day events when startTime column is unmapped, supporting 2-digit years and ranges', async () => {

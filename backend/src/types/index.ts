@@ -26,7 +26,7 @@ export interface CalendarEventData {
   summary: string;
   description?: string;
   location?: string;
-  colorId?: string;
+  colorId?: string | null;
   start: { dateTime?: string; date?: string; timeZone: string };
   end: { dateTime?: string; date?: string; timeZone: string };
   attendees?: Array<{ email: string }>;

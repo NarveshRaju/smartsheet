@@ -186,12 +186,16 @@ export async function createEvent(userId: string, calendarId: string, eventData:
   const auth = await getAuthenticatedClient(userId);
   const calendar = google.calendar({ version: 'v3', auth });
   let id = requestedId;
+  const insertBody: any = { ...eventData, id };
+  if (!insertBody.colorId) {
+    delete insertBody.colorId;
+  }
   // A deleted deterministic ID is a tombstone. Its ETag gives a stable next generation,
   // including when an insert succeeded but its response or database write was lost.
   for (let generation = 0; generation < 10; generation++) {
     try {
       const response = await withRetry(() => calendar.events.insert({ calendarId,
-        requestBody: { ...eventData, id } as calendar_v3.Schema$Event }));
+        requestBody: insertBody as calendar_v3.Schema$Event }));
       return response.data.id!;
     } catch (error: any) {
       if ((error.response?.status || error.code) !== 409) throw error;

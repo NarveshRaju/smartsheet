@@ -149,6 +149,7 @@ export async function getSheetRows(userId: string, sheetId: string) {
       return {
         id: row.id.toString(),
         rowNumber: row.rowNumber,
+        format: row.format,
         cells,
         modifiedAt: row.modifiedAt,
       };
@@ -182,6 +183,7 @@ export async function getRow(userId: string, sheetId: string, rowId: string) {
     return {
       id: row.id.toString(),
       rowNumber: row.rowNumber,
+      format: row.format,
       cells,
       modifiedAt: row.modifiedAt,
     };
