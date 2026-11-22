@@ -184,7 +184,9 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
           action = 'create';
         }
         const data = { googleEventId: eventId, syncStatus: 'synced', syncAction: action,
-          lastSyncedAt: new Date(), lastError: null, retryCount: 0, nextRetryAt: null, inputHash: hash, parsedEvent: JSON.parse(JSON.stringify(eventData)) };
+          lastSyncedAt: new Date(), lastError: null, retryCount: 0, nextRetryAt: null, inputHash: hash,
+          parsedEvent: JSON.parse(JSON.stringify(eventData)),
+          rowData: JSON.parse(JSON.stringify(row)) };
         await syncDependencies.db.syncRecord.upsert({
           where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
           create: { syncConfigId: configId, smartsheetRowId: rowId, ...data }, update: data,
@@ -353,6 +355,7 @@ export async function syncTargetRows(
           nextRetryAt: null,
           inputHash: hash,
           parsedEvent: JSON.parse(JSON.stringify(eventData)),
+          rowData: JSON.parse(JSON.stringify(row)),
         };
         await syncDependencies.db.syncRecord.update({
           where: { id: record.id },
@@ -371,6 +374,7 @@ export async function syncTargetRows(
           nextRetryAt: null,
           inputHash: hash,
           parsedEvent: JSON.parse(JSON.stringify(eventData)),
+          rowData: JSON.parse(JSON.stringify(row)),
         };
         await syncDependencies.db.syncRecord.upsert({
           where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },

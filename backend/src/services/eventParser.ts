@@ -405,32 +405,18 @@ export function resolveRowColorId(
   const cellFormatColor = mapSmartsheetFormatToColor(cellFormat);
   if (cellFormatColor) return cellFormatColor;
 
-  // 1c. Value keywords (e.g. "Upcoming Event", "Promo Slide", "2x3 Signs", etc.)
+  // 1c. Row-level background color format
+  const rowFormatColor = mapSmartsheetFormatToColor(rowFormat);
+  if (rowFormatColor) return rowFormatColor;
+
+  // 1d. Value keywords (for known colored subcategories like Promo Slide, 2x3 Signs, Decals/Stickers)
   if (cellVal) {
     const kwColor = parseColorToGoogleColorId(cellVal, undefined);
     if (kwColor) return kwColor;
   }
 
-  // 1d. If mapped color cell had no direct keyword match, check if a Category column provides the color family
-  if (row.cells) {
-    for (const cell of Object.values<any>(row.cells)) {
-      const colTitle = (cell?.columnTitle || '').toLowerCase();
-      if (colTitle.includes('category') && cell?.columnTitle !== colorCell?.columnTitle) {
-        const catVal = cell?.value?.toString() || cell?.displayValue;
-        if (catVal) {
-          const catColor = parseColorToGoogleColorId(catVal, cell?.format);
-          if (catColor) return catColor;
-        }
-      }
-    }
-  }
-
-  // 1e. Row-level background color format
-  const rowFormatColor = mapSmartsheetFormatToColor(rowFormat);
-  if (rowFormatColor) return rowFormatColor;
-
-  // Explicit color column was mapped, but this row is empty/uncolored:
-  // Return null to clear any existing color in Google Calendar.
+  // Explicit color column was mapped, but this row has no color:
+  // Return null so the calendar event is left as default calendar color.
   return null;
 }
 

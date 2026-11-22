@@ -61,19 +61,27 @@ export function matchHexToGoogleColor(hexStr: string): string | undefined {
  * Common color name and subcategory keyword mapping
  */
 const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
-  // 2: Sage / Light Green / Mint (e.g. Signs, Signage, Posters, Physical Displays)
+  // 2: Sage / Light Green / Mint (e.g. Marque Sign, 2x3 Signs, Posters, Physical Signs)
   {
     keywords: [
+      'marque sign', 'marquee sign', 'marque', 'marquee',
       '2x3 signs', '2x3 sign', 'signs', 'sign', 'signage', 'print', 'printed',
       'yard signs', 'yard sign', 'road sign', 'road signs',
-      'marque sign', 'marquee sign', 'marque', 'marquee',
       'restroom posters', 'restroom poster', 'posters', 'poster',
-      'banner', 'banners', 'decals/stickers', 'decals', 'decal', 'stickers', 'sticker',
+      'banner', 'banners',
       'photo wall', 'backdrop', 'tension fabric', '3d tension fabric', 'fabric',
       'standee', 'display', 'displays',
       'sage', 'light green', 'mint', 'lime', 'spring green', 'light-green', 'green-light'
     ],
     colorId: '2'
+  },
+  // 10: Basil / Darker Green (e.g. Decals/Stickers)
+  {
+    keywords: [
+      'decals/stickers', 'decals', 'decal', 'stickers', 'sticker',
+      'dark green', 'forest green', 'emerald', 'olive', 'basil'
+    ],
+    colorId: '10'
   },
   // 5: Banana / Yellow (e.g. Upcoming Events, Newsletter, Email blasts)
   {
@@ -92,6 +100,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
   {
     keywords: [
       'promo slide', 'promo slides', 'promo', 'promotion', 'promotional',
+      'invite/promo cards', 'promo cards',
       'app home feature', 'app feature', 'app', 'mobile app',
       'lobby tvs', 'lobby tv', 'tv', 'tvs', 'screens', 'screen',
       'digital', 'slide', 'slides',
@@ -122,15 +131,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
     ],
     colorId: '6'
   },
-  // 8: Graphite / Gray (e.g. Social Media, Brand Identity, Online Profiles)
+  // 8: Graphite / Gray (Only explicit gray color names - do not force gray on uncolored subcategories)
   {
     keywords: [
-      'social media graphic', 'social media graphics', 'social media', 'social',
-      'linktree insta', 'linktree services', 'linktree',
-      'instagram', 'insta', 'facebook', 'fb', 'twitter', 'tiktok', 'youtube', 'threads', 'linkedin',
-      'google biz profile', 'google biz', 'google business profile', 'biz profile',
-      'neighborhood groups/influencers', 'influencers', 'neighborhood groups',
-      'graphic identity',
       'graphite', 'gray', 'grey', 'charcoal', 'slate', 'silver'
     ],
     colorId: '8'
@@ -205,8 +208,8 @@ export const SMARTSHEET_PALETTE_TO_GCAL: Record<number, string> = {
 
   // Greens (Column 4)
   7: '2',   // #E7F5E9 -> Sage (Light Mint)
-  14: '2',  // #C6E7C8 -> Sage (Soft Green)
-  22: '2',  // #7ED085 -> Sage (Medium Green)
+  14: '2',  // #C6E7C8 -> Sage (Soft Pale Green)
+  22: '10', // #7ED085 -> Basil (Medium / Darker Green - distinct shade!)
   30: '10', // #40B14B -> Basil (Bright Green)
   38: '10', // #237F2E -> Basil (Dark Green)
 
@@ -252,11 +255,10 @@ export function mapSmartsheetFormatToColor(formatInput?: any): string | undefine
   if (!formatStr || typeof formatStr !== 'string') return undefined;
 
   const parts = formatStr.split(',');
-  if (parts.length < 9) return undefined;
 
   // 1. Check background color (position 9)
-  if (parts.length > 9) {
-    const bgIndex = parseInt(parts[9], 10);
+  if (parts.length >= 10 && parts[9]?.trim()) {
+    const bgIndex = parseInt(parts[9].trim(), 10);
     if (!isNaN(bgIndex) && bgIndex > 0 && bgIndex !== 2 && bgIndex !== 3) {
       const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[bgIndex];
       if (gcalColor) return gcalColor;
@@ -264,8 +266,8 @@ export function mapSmartsheetFormatToColor(formatInput?: any): string | undefine
   }
 
   // 2. Check taskbar color (position 10)
-  if (parts.length > 10) {
-    const tbIndex = parseInt(parts[10], 10);
+  if (parts.length >= 11 && parts[10]?.trim()) {
+    const tbIndex = parseInt(parts[10].trim(), 10);
     if (!isNaN(tbIndex) && tbIndex > 0 && tbIndex !== 2 && tbIndex !== 3) {
       const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[tbIndex];
       if (gcalColor) return gcalColor;
@@ -273,11 +275,23 @@ export function mapSmartsheetFormatToColor(formatInput?: any): string | undefine
   }
 
   // 3. Check text color (position 8) if set and not black (1) or white (2)
-  if (parts.length > 8) {
-    const textIndex = parseInt(parts[8], 10);
+  if (parts.length >= 9 && parts[8]?.trim()) {
+    const textIndex = parseInt(parts[8].trim(), 10);
     if (!isNaN(textIndex) && textIndex > 1 && textIndex !== 2 && textIndex !== 3) {
       const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[textIndex];
       if (gcalColor) return gcalColor;
+    }
+  }
+
+  // 4. Fallback: check any token in parts that is a known color index (4 through 41)
+  for (const part of parts) {
+    const trimmed = part?.trim();
+    if (trimmed) {
+      const idx = parseInt(trimmed, 10);
+      if (!isNaN(idx) && idx >= 4 && idx <= 41) {
+        const gcalColor = SMARTSHEET_PALETTE_TO_GCAL[idx];
+        if (gcalColor) return gcalColor;
+      }
     }
   }
 

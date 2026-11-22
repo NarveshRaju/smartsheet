@@ -125,7 +125,9 @@ test('colorMapper resolves color codes, names, subcategory text, and Smartsheet 
   assert.equal(parseColorToGoogleColorId('Events Page'), '4');
   assert.equal(parseColorToGoogleColorId('Announcements'), '6');
   assert.equal(parseColorToGoogleColorId('Restroom Posters'), '2');
-  assert.equal(parseColorToGoogleColorId('Social Media'), '8');
+  assert.equal(parseColorToGoogleColorId('Marque Sign'), '2');
+  assert.equal(parseColorToGoogleColorId('Decals/Stickers'), '10');
+  assert.equal(parseColorToGoogleColorId('Social Media'), undefined, 'Uncolored subcategory returns undefined');
   assert.equal(parseColorToGoogleColorId('Newsletter Feature Mention'), '5');
 
   // Smartsheet cell format string (descriptor 9 is bg_color mapped via official palette)
@@ -216,23 +218,21 @@ test('resolveRowColorId and inputHash accurately track cell, row, and cleared co
   // 1. Keyword / Subcategory
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Upcoming Event' } } }, mapping), '5');
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Promo Slide' } } }, mapping), '7');
-  assert.equal(resolveRowColorId({ cells: { subCategory: { value: '2x3 Signs' } } }, mapping), '2'); // Sage (Light Green)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Marque Sign' } } }, mapping), '2'); // Sage (Light Green)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Decals/Stickers' } } }, mapping), '10'); // Basil (Dark Green - different shade!)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: '2x3 Signs' } } }, mapping), '2');
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Road Sign' } } }, mapping), '2');
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'App Home Feature' } } }, mapping), '7');
 
-  // 1b. Category fallback when subcategory has an unusual name
-  assert.equal(resolveRowColorId({
-    cells: {
-      subCategory: { value: 'Custom Foam Board Special' },
-      cat: { columnTitle: 'Category', value: 'Signage' }
-    }
-  }, mapping), '2');
+  // 1b. Uncolored subcategory without format returns null (leave as calendar default, no forced color)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Social Media' } } }, mapping), null);
 
   // 2. Cell format background color (27 = Red Tomato)
   assert.equal(resolveRowColorId({ cells: { subCategory: { format: ',,,,,,,,,27,,,,,,' } } }, mapping), '11');
 
-  // 2b. Cell format object with conditionalFormat (14 = Soft Green Sage)
+  // 2b. Cell format object with conditionalFormat (14 = Soft Green Sage vs 22 = Medium Green Basil)
   assert.equal(resolveRowColorId({ cells: { subCategory: { format: { conditionalFormat: ',,,,,,,,,14,,,,,,' } } } }, mapping), '2');
+  assert.equal(resolveRowColorId({ cells: { subCategory: { format: { conditionalFormat: ',,,,,,,,,22,,,,,,' } } } }, mapping), '10');
 
   // 3. Row format background color (21 = Yellow Banana)
   assert.equal(resolveRowColorId({ format: ',,,,,,,,,21,,,,,,', cells: { subCategory: {} } }, mapping), '5');
