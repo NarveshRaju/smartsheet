@@ -176,7 +176,7 @@ test('mapRowToEvent assigns colorId when color column is mapped, and ignores whe
 
   const parsedWithoutColor = await mapRowToEvent(rowWithColor, mappingWithoutColor, 'Asia/Kolkata');
   assert.ok(parsedWithoutColor);
-  assert.equal(parsedWithoutColor.colorId, undefined);
+  assert.equal(parsedWithoutColor.colorId, undefined, 'Unmapped color column must be undefined so no color is assigned from our own');
 });
 
 test('sameEvent and buildCalendarPatch respect colorId and color clearing', () => {
@@ -226,10 +226,10 @@ test('resolveRowColorId and inputHash accurately track cell, row, and cleared co
   // 4. Cleared color (mapped column empty and no format) -> returns null to clear calendar color
   assert.equal(resolveRowColorId({ cells: { subCategory: {} } }, mapping), null);
 
-  // 5. Unmapped color column with row format fallback (15 = Blue Peacock)
-  assert.equal(resolveRowColorId({ format: ',,,,,,,,,15,,,,,,', cells: {} }, { title: 'title', startDate: 'date' }), '7');
+  // 5. Unmapped color column MUST NOT pick colors from row format or cells -> returns undefined
+  assert.equal(resolveRowColorId({ format: ',,,,,,,,,15,,,,,,', cells: { a: { format: ',,,,,,,,,15,,,,,,' } } }, { title: 'title', startDate: 'date' }), undefined);
 
-  // 6. Unmapped color column with no color -> undefined
+  // 6. Unmapped color column with empty cells -> returns undefined
   assert.equal(resolveRowColorId({ cells: {} }, { title: 'title', startDate: 'date' }), undefined);
 
   // 7. inputHash changes when row.format changes

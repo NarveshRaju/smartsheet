@@ -152,7 +152,15 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
           target = (byContent.get(eventFingerprint(eventData, timezone)) || []).find(e =>
             !claimed.has(e.id!) && (!reserved.has(e.id!) || reserved.get(e.id!) === rowId));
         }
-        const desired: CalendarEventData = { ...eventData, extendedProperties: { private: {
+        const mapping = config.columnMapping as ColumnMapping | null;
+        const hasColorMapping = Boolean(mapping?.color && mapping.color.trim());
+        let desiredColorId = eventData.colorId;
+        if (!hasColorMapping && (record?.parsedEvent as any)?.colorId) {
+          // If color is unmapped, but our system previously set a custom colorId on this record,
+          // explicitly clear it (null) so Google Calendar removes the custom color and reverts to calendar default.
+          desiredColorId = null;
+        }
+        const desired: CalendarEventData = { ...eventData, colorId: desiredColorId, extendedProperties: { private: {
           ...(target?.extendedProperties?.private || {}), smartsheetSheetId: sheetId, smartsheetRowId: rowId,
         } } };
         let eventId: string;
@@ -315,8 +323,15 @@ export async function syncTargetRows(
       }
 
       const hash = inputHash(row, config.columnMapping, timezone);
+      const mapping = config.columnMapping as ColumnMapping | null;
+      const hasColorMapping = Boolean(mapping?.color && mapping.color.trim());
+      let desiredColorId = eventData.colorId;
+      if (!hasColorMapping && (record?.parsedEvent as any)?.colorId) {
+        desiredColorId = null;
+      }
       const desired: CalendarEventData = {
         ...eventData,
+        colorId: desiredColorId,
         extendedProperties: {
           private: {
             smartsheetSheetId: sheetId,

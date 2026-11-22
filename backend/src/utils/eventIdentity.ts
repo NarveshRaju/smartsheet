@@ -56,5 +56,5 @@ export function stableEventId(sheetId: string, rowId: string, generation = ''): 
 export function inputHash(row: any, mapping: unknown, timezone: string): string {
   const cells = Object.entries<any>(row.cells || {}).sort(([a], [b]) => a.localeCompare(b))
     .map(([id, cell]) => [id, cell.value ?? null, cell.displayValue ?? null, cell.columnTitle ?? null, cell.format ?? null]);
-  return createHash('sha256').update(JSON.stringify([row.format ?? null, cells, mapping, timezone, 'parser-v2'])).digest('hex');
+  return createHash('sha256').update(JSON.stringify([row.format ?? null, cells, mapping, timezone, 'parser-v4'])).digest('hex');
 }

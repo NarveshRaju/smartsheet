@@ -42,8 +42,6 @@ export default function ColumnMapping({ sheetId, mapping, onChange, disabled }: 
             auto.endDate = col.id;
           } else if (!auto.startTime && lower.includes('start time')) {
             auto.startTime = col.id;
-          } else if (!auto.color && (lower.includes('sub-category') || lower.includes('subcategory') || lower.includes('color'))) {
-            auto.color = col.id;
           }
         }
         if (Object.keys(auto).length > 0) {
