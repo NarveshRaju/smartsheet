@@ -245,12 +245,132 @@ async function executeFullSync(configId: string): Promise<SyncResult> {
 }
 
 // All entry points share the same reconciliation and lock, including webhook bursts.
-export async function syncRow(configId: string, _rowId: string, _action: 'created' | 'updated' | 'deleted'): Promise<void> {
+export async function syncRow(configId: string, rowId: string, _action: 'created' | 'updated' | 'deleted'): Promise<void> {
   const config = await syncDependencies.db.syncConfiguration.findUnique({ where: { id: configId } });
   if (config?.isEnabled) {
-    const result = await fullSync(configId);
-    if (result.failed) throw new Error(result.errors.map(e => e.error).join('; '));
+    if (rowId) {
+      await syncTargetRows(configId, [rowId]);
+    } else {
+      const result = await fullSync(configId);
+      if (result.failed) throw new Error(result.errors.map(e => e.error).join('; '));
+    }
   }
+}
+
+/**
+ * Fast targeted sync for specific rows that changed in Smartsheet.
+ * Updates Google Calendar events and database records in < 500ms without
+ * running a full multi-thousand-row scan.
+ */
+export async function syncTargetRows(
+  configId: string,
+  rowIds: string[]
+): Promise<{ updated: number; created: number; deleted: number; failed: number }> {
+  const config = await syncDependencies.db.syncConfiguration.findUnique({ where: { id: configId } });
+  if (!config || !config.isEnabled) return { updated: 0, created: 0, deleted: 0, failed: 0 };
+
+  const userId = config.userId;
+  const sheetId = config.smartsheetSheetId;
+  const calendarId = config.googleCalendarId;
+  const timezone = await syncDependencies.google.getCalendarTimezone(userId, calendarId);
+
+  const result = { updated: 0, created: 0, deleted: 0, failed: 0 };
+
+  for (const rowId of rowIds) {
+    try {
+      const [row, record] = await Promise.all([
+        syncDependencies.smartsheet.getRow(userId, sheetId, rowId),
+        syncDependencies.db.syncRecord.findUnique({
+          where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
+        }),
+      ]);
+
+      // 1. If row was deleted in Smartsheet
+      if (!row) {
+        if (record?.googleEventId && record.syncStatus !== 'deleted') {
+          await syncDependencies.google.deleteEvent(userId, calendarId, record.googleEventId);
+          await syncDependencies.db.syncRecord.update({
+            where: { id: record.id },
+            data: { syncStatus: 'deleted', syncAction: 'delete', lastSyncedAt: new Date(), lastError: null },
+          });
+          result.deleted++;
+        }
+        continue;
+      }
+
+      // 2. Parse event data
+      const eventData = await syncDependencies.parse(row, config.columnMapping as ColumnMapping, timezone);
+
+      // If invalid/cancelled or missing required date
+      if (!eventData || eventData.status === 'cancelled') {
+        if (record?.googleEventId && record.syncStatus !== 'deleted') {
+          await syncDependencies.google.deleteEvent(userId, calendarId, record.googleEventId);
+          await syncDependencies.db.syncRecord.update({
+            where: { id: record.id },
+            data: { syncStatus: 'deleted', syncAction: 'delete', lastSyncedAt: new Date(), lastError: null },
+          });
+          result.deleted++;
+        }
+        continue;
+      }
+
+      const hash = inputHash(row, config.columnMapping, timezone);
+      const desired: CalendarEventData = {
+        ...eventData,
+        extendedProperties: {
+          private: {
+            smartsheetSheetId: sheetId,
+            smartsheetRowId: rowId,
+          },
+        },
+      };
+
+      if (record?.googleEventId) {
+        // Fast PATCH directly to Google Calendar with updated colorId & fields
+        await syncDependencies.google.updateEvent(userId, calendarId, record.googleEventId, desired);
+        result.updated++;
+        const data = {
+          syncStatus: 'synced',
+          syncAction: 'update',
+          lastSyncedAt: new Date(),
+          lastError: null,
+          retryCount: 0,
+          nextRetryAt: null,
+          inputHash: hash,
+          parsedEvent: JSON.parse(JSON.stringify(eventData)),
+        };
+        await syncDependencies.db.syncRecord.update({
+          where: { id: record.id },
+          data,
+        });
+      } else {
+        const eventId = await syncDependencies.google.createEvent(userId, calendarId, desired, stableEventId(sheetId, rowId));
+        result.created++;
+        const data = {
+          googleEventId: eventId,
+          syncStatus: 'synced',
+          syncAction: 'create',
+          lastSyncedAt: new Date(),
+          lastError: null,
+          retryCount: 0,
+          nextRetryAt: null,
+          inputHash: hash,
+          parsedEvent: JSON.parse(JSON.stringify(eventData)),
+        };
+        await syncDependencies.db.syncRecord.upsert({
+          where: { syncConfigId_smartsheetRowId: { syncConfigId: configId, smartsheetRowId: rowId } },
+          create: { syncConfigId: configId, smartsheetRowId: rowId, ...data },
+          update: data,
+        });
+      }
+      logger.info(`⚡ Fast sync updated row ${rowId} (colorId: ${eventData.colorId ?? 'default'})`);
+    } catch (err: any) {
+      result.failed++;
+      logger.warn(`Fast sync row ${rowId} error: ${err.message}`);
+    }
+  }
+
+  return result;
 }
 
 export async function retrySyncRecord(recordId: string): Promise<void> {
@@ -360,7 +480,7 @@ let isSyncRunning = false;
 export function startAutoSyncWorker(): void {
   if (autoSyncTimer) return;
 
-  const intervalMs = Math.max(10000, parseInt(env.AUTO_SYNC_INTERVAL_MS, 10) || 60000);
+  const intervalMs = Math.max(10000, parseInt(env.AUTO_SYNC_INTERVAL_MS, 10) || 20000);
   logger.info(`🔄 Starting Auto-Sync background worker (polling every ${intervalMs / 1000}s)`);
 
   // Run a quick tick shortly after start
@@ -385,16 +505,21 @@ export async function runAutoSyncTick(): Promise<void> {
       where: { isEnabled: true },
     });
 
-    for (const config of activeConfigs) {
-      try {
-        const result = await fullSync(config.id);
-        if (result.created > 0 || result.updated > 0 || result.deleted > 0) {
-          logger.info(`⚡ Auto-sync updated config ${config.id}: +${result.created} ~${result.updated} -${result.deleted}`);
+    // Run active configs in parallel so large sheets never starve small sheets
+    await Promise.allSettled(
+      activeConfigs.map(async (config) => {
+        try {
+          const result = await fullSync(config.id);
+          if (result.created > 0 || result.updated > 0 || result.deleted > 0) {
+            logger.info(`⚡ Auto-sync updated config ${config.id}: +${result.created} ~${result.updated} -${result.deleted}`);
+          }
+        } catch (err: any) {
+          if (!/already running/i.test(err.message)) {
+            logger.warn(`Auto-sync tick error for config ${config.id}: ${err.message}`);
+          }
         }
-      } catch (err: any) {
-        logger.warn(`Auto-sync tick error for config ${config.id}: ${err.message}`);
-      }
-    }
+      })
+    );
   } catch (error: any) {
     logger.error(`Auto-sync worker error: ${error.message}`);
   } finally {

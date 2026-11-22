@@ -52,9 +52,23 @@ router.post('/smartsheet', webhookLimiter, async (req: Request, res: Response) =
     // Respond quickly to Smartsheet (must respond within 30 seconds)
     res.status(200).json({ success: true });
 
-    // One reconciliation per callback, regardless of the number/order of row and cell events.
-    // Polling catches changes arriving during an in-flight reconciliation.
-    void syncService.fullSync(config.id).catch(error => logger.warn(`Webhook sync deferred: ${error.message}`));
+    // Extract changed row IDs from events for instant targeted sync (< 500ms)
+    const changedRowIds = new Set<string>();
+    for (const ev of payload.events) {
+      if (ev.rowId) changedRowIds.add(String(ev.rowId));
+      if (ev.objectType === 'row' && ev.id) changedRowIds.add(String(ev.id));
+    }
+
+    if (changedRowIds.size > 0 && changedRowIds.size <= 25) {
+      const rowIdArray = Array.from(changedRowIds);
+      logger.info(`⚡ Executing fast targeted sync for ${rowIdArray.length} row(s) on config ${config.id}`);
+      void syncService.syncTargetRows(config.id, rowIdArray).catch((error) => {
+        logger.warn(`Targeted sync deferred: ${error.message}, falling back to fullSync`);
+        void syncService.fullSync(config.id).catch((e) => logger.warn(`Webhook fullSync deferred: ${e.message}`));
+      });
+    } else {
+      void syncService.fullSync(config.id).catch((error) => logger.warn(`Webhook sync deferred: ${error.message}`));
+    }
   } catch (error: any) {
     logger.error(`Webhook handler error: ${error.message}`);
     // Still return 200 to avoid Smartsheet retrying

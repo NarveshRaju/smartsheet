@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { logger, getSystemLogs, clearSystemLogs } from '../src/utils/logger.js';
-import { getAllConfigsWithStats, retryAllFailedRecords, syncDependencies } from '../src/services/sync.service.js';
+import { getAllConfigsWithStats, retryAllFailedRecords, syncTargetRows, syncDependencies } from '../src/services/sync.service.js';
 
 test('system logger captures logs in memory buffer with level and search filtering', () => {
   clearSystemLogs();
@@ -128,11 +128,16 @@ test('colorMapper resolves color codes, names, subcategory text, and Smartsheet 
   assert.equal(parseColorToGoogleColorId('Social Media'), '8');
   assert.equal(parseColorToGoogleColorId('Newsletter Feature Mention'), '5');
 
-  // Smartsheet cell format string (descriptor 9 is bg_color)
-  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,14,,,,,,'), '5'); // Yellow
-  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,18,,,,,,'), '7'); // Cyan/Light Blue
-  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,11,,,,,,'), '4'); // Pink
-  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,17,,,,,,'), '2'); // Light Green
+  // Smartsheet cell format string (descriptor 9 is bg_color mapped via official palette)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,21,,,,,,'), '5'); // Yellow (Banana)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,15,,,,,,'), '7'); // Light Blue (Peacock)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,11,,,,,,'), '4'); // Pink (Flamingo)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,14,,,,,,'), '2'); // Light Green (Sage)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,27,,,,,,'), '11'); // Red (Tomato)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,28,,,,,,'), '6'); // Orange (Tangerine)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,18,,,,,,'), '8'); // Gray (Graphite)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,9,,,,,,'), '1'); // Lavender
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,32,,,,,,'), '3'); // Grape
 
   // Optionality / blank handling
   assert.equal(parseColorToGoogleColorId(undefined, undefined), undefined);
@@ -212,17 +217,17 @@ test('resolveRowColorId and inputHash accurately track cell, row, and cleared co
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Upcoming Event' } } }, mapping), '5');
   assert.equal(resolveRowColorId({ cells: { subCategory: { value: 'Promo Slide' } } }, mapping), '7');
 
-  // 2. Cell format background color
-  assert.equal(resolveRowColorId({ cells: { subCategory: { format: ',,,,,,,,,10,,,,,,' } } }, mapping), '11');
+  // 2. Cell format background color (27 = Red Tomato)
+  assert.equal(resolveRowColorId({ cells: { subCategory: { format: ',,,,,,,,,27,,,,,,' } } }, mapping), '11');
 
-  // 3. Row format background color
-  assert.equal(resolveRowColorId({ format: ',,,,,,,,,14,,,,,,', cells: { subCategory: {} } }, mapping), '5');
+  // 3. Row format background color (21 = Yellow Banana)
+  assert.equal(resolveRowColorId({ format: ',,,,,,,,,21,,,,,,', cells: { subCategory: {} } }, mapping), '5');
 
   // 4. Cleared color (mapped column empty and no format) -> returns null to clear calendar color
   assert.equal(resolveRowColorId({ cells: { subCategory: {} } }, mapping), null);
 
-  // 5. Unmapped color column with row format fallback
-  assert.equal(resolveRowColorId({ format: ',,,,,,,,,18,,,,,,', cells: {} }, { title: 'title', startDate: 'date' }), '7');
+  // 5. Unmapped color column with row format fallback (15 = Blue Peacock)
+  assert.equal(resolveRowColorId({ format: ',,,,,,,,,15,,,,,,', cells: {} }, { title: 'title', startDate: 'date' }), '7');
 
   // 6. Unmapped color column with no color -> undefined
   assert.equal(resolveRowColorId({ cells: {} }, { title: 'title', startDate: 'date' }), undefined);
@@ -286,4 +291,74 @@ test('mapRowToEvent creates all-day events when startTime column is unmapped, su
   };
   const headerEvent = await mapRowToEvent(headerRow, promoMapping, 'Asia/Kolkata');
   assert.equal(headerEvent, null, 'Header row without start date must return null');
+});
+
+test('syncTargetRows performs fast targeted update on changed row with new color', async () => {
+  const originalDb = syncDependencies.db;
+  const originalGoogle = syncDependencies.google;
+  const originalSmartsheet = syncDependencies.smartsheet;
+
+  let updatedEventPayload: any = null;
+  let updatedRecordPayload: any = null;
+
+  (syncDependencies as any).db = {
+    syncConfiguration: {
+      findUnique: async () => ({
+        id: 'cfg-fast',
+        isEnabled: true,
+        userId: 'u1',
+        smartsheetSheetId: 'sheet-1',
+        googleCalendarId: 'cal-1',
+        columnMapping: { title: 't', startDate: 'd', color: 'c' },
+      }),
+    },
+    syncRecord: {
+      findUnique: async () => ({
+        id: 'rec-1',
+        syncConfigId: 'cfg-fast',
+        smartsheetRowId: 'row-100',
+        googleEventId: 'gcal-evt-100',
+        syncStatus: 'synced',
+      }),
+      update: async ({ data }: any) => {
+        updatedRecordPayload = data;
+        return { id: 'rec-1', ...data };
+      },
+      upsert: async () => ({ id: 'rec-1' }),
+    },
+  };
+
+  (syncDependencies as any).google = {
+    getCalendarTimezone: async () => 'UTC',
+    updateEvent: async (_userId: string, _calendarId: string, _eventId: string, desired: any) => {
+      updatedEventPayload = desired;
+    },
+    createEvent: async () => 'new-gcal-id',
+    deleteEvent: async () => {},
+  };
+
+  // Row has cell with color format 27 (Tomato / Red)
+  (syncDependencies as any).smartsheet = {
+    getRow: async () => ({
+      id: 'row-100',
+      cells: {
+        t: { value: 'Urgent Strategy Meeting' },
+        d: { value: '2026-11-25' },
+        c: { format: ',,,,,,,,,27,,,,,,' },
+      },
+    }),
+  };
+
+  try {
+    const result = await syncTargetRows('cfg-fast', ['row-100']);
+    assert.equal(result.updated, 1, 'Should update 1 row directly');
+    assert.ok(updatedEventPayload, 'Google Calendar updateEvent should be called');
+    assert.equal(updatedEventPayload.colorId, '11', 'Should update colorId to 11 (Tomato) for format 27');
+    assert.ok(updatedRecordPayload, 'Sync record should be updated');
+    assert.equal(updatedRecordPayload.parsedEvent.colorId, '11');
+  } finally {
+    (syncDependencies as any).db = originalDb;
+    (syncDependencies as any).google = originalGoogle;
+    (syncDependencies as any).smartsheet = originalSmartsheet;
+  }
 });

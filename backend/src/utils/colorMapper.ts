@@ -145,6 +145,65 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
 ];
 
 /**
+ * Official Smartsheet Background Color Palette to Google Calendar colorId.
+ * Based on Smartsheet's FormatTables.color palette definition.
+ */
+export const SMARTSHEET_PALETTE_TO_GCAL: Record<number, string> = {
+  // Reds & Pinks (Column 1)
+  4: '4',   // #FFEBEE -> Flamingo (Light Pink)
+  11: '4',  // #FFCCD2 -> Flamingo (Soft Pink)
+  19: '4',  // #F87E7D -> Flamingo (Coral Pink)
+  27: '11', // #EA352E -> Tomato (Bright Red)
+  35: '11', // #991310 -> Tomato (Dark Red)
+
+  // Oranges & Peaches (Column 2)
+  5: '6',   // #FFF3DF -> Tangerine (Light Peach)
+  12: '6',  // #FFE1AF -> Tangerine (Soft Peach)
+  20: '6',  // #FFCD7A -> Tangerine (Peach Orange)
+  28: '6',  // #FF8D00 -> Tangerine (Bright Orange)
+  36: '6',  // #EA5000 -> Tangerine (Dark Orange)
+
+  // Yellows (Column 3)
+  6: '5',   // #FFFEE6 -> Banana (Light Yellow)
+  13: '5',  // #FEFF85 -> Banana (Soft Yellow)
+  21: '5',  // #FEFF00 -> Banana (Bright Yellow)
+  29: '5',  // #FFED00 -> Banana (Vibrant Yellow)
+  37: '5',  // #EBC700 -> Banana (Gold / Dark Yellow)
+
+  // Greens (Column 4)
+  7: '2',   // #E7F5E9 -> Sage (Light Mint)
+  14: '2',  // #C6E7C8 -> Sage (Soft Green)
+  22: '2',  // #7ED085 -> Sage (Medium Green)
+  30: '10', // #40B14B -> Basil (Bright Green)
+  38: '10', // #237F2E -> Basil (Dark Green)
+
+  // Blues (Column 5)
+  8: '7',   // #E2F2FE -> Peacock (Light Sky Blue)
+  15: '7',  // #B9DDFC -> Peacock (Soft Blue)
+  23: '7',  // #5FB3F9 -> Peacock (Sky Blue)
+  31: '9',  // #1061C3 -> Blueberry (Bright Blue)
+  39: '9',  // #0B347D -> Blueberry (Navy Blue)
+
+  // Purples (Column 6)
+  9: '1',   // #F4E4F5 -> Lavender (Light Purple)
+  16: '1',  // #EBC7EF -> Lavender (Soft Purple)
+  24: '1',  // #D190DA -> Lavender (Lilac)
+  32: '3',  // #9210AD -> Grape (Purple)
+  40: '3',  // #61058B -> Grape (Dark Purple)
+
+  // Grays & Browns (Column 7)
+  1: '8',   // #000000 -> Graphite (Black)
+  10: '8',  // #F2E8DE -> Graphite (Light Gray-Tan)
+  17: '8',  // #EEDCCA -> Graphite (Tan)
+  18: '8',  // #E5E5E5 -> Graphite (Light Gray)
+  25: '8',  // #D0AF8F -> Graphite (Medium Tan)
+  26: '8',  // #BDBDBD -> Graphite (Medium Gray)
+  33: '6',  // #974C00 -> Tangerine (Brown)
+  34: '8',  // #757575 -> Graphite (Dark Gray)
+  41: '8',  // #592C00 -> Graphite (Dark Brown)
+};
+
+/**
  * Map Smartsheet cell format string (index 9 is bg_color) to Google Calendar colorId
  */
 export function mapSmartsheetFormatToColor(formatStr?: string | null): string | undefined {
@@ -157,34 +216,7 @@ export function mapSmartsheetFormatToColor(formatStr?: string | null): string | 
     return undefined; // 0=none, 2=white, 3=transparent
   }
 
-  // Smartsheet Background Color Palette Index to Google ColorId
-  switch (bgIndex) {
-    case 1:
-    case 4: case 5: case 6: case 7: case 8: case 9:
-      return '8'; // Graphite / Gray
-    case 10:
-      return '11'; // Tomato / Red
-    case 11: case 22: case 27: case 39: case 40:
-      return '4'; // Flamingo / Pink / Light Red
-    case 12: case 13: case 26: case 32:
-      return '6'; // Tangerine / Orange / Peach
-    case 14: case 15: case 25: case 30: case 31:
-      return '5'; // Banana / Yellow
-    case 16: case 34: case 35:
-      return '10'; // Basil / Dark Green
-    case 17: case 24: case 33:
-      return '2'; // Sage / Light Green
-    case 18: case 23: case 29: case 36: case 37:
-      return '7'; // Peacock / Cyan / Light Blue
-    case 19: case 38:
-      return '9'; // Blueberry / Dark Blue
-    case 20:
-      return '3'; // Grape / Purple
-    case 21: case 28:
-      return '1'; // Lavender / Light Purple
-    default:
-      return undefined;
-  }
+  return SMARTSHEET_PALETTE_TO_GCAL[bgIndex];
 }
 
 /**
