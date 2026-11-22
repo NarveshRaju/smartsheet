@@ -60,12 +60,21 @@ export function matchHexToGoogleColor(hexStr: string): string | undefined {
 /**
  * Common color name and subcategory keyword mapping
  */
+function matchesKeyword(text: string, kw: string): boolean {
+  if (text === kw) return true;
+  if (/[\s\/\-]/.test(kw)) {
+    return text.includes(kw);
+  }
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+}
+
 const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
   // 2: Sage / Light Green / Mint (e.g. Marque Sign, 2x3 Signs, Posters, Physical Signs)
   {
     keywords: [
       'marque sign', 'marquee sign', 'marque', 'marquee',
-      '2x3 signs', '2x3 sign', 'signs', 'sign', 'signage', 'print', 'printed',
+      '2x3 signs', '2x3 sign', 'signs', 'sign', 'signage',
       'yard signs', 'yard sign', 'road sign', 'road signs',
       'restroom posters', 'restroom poster', 'posters', 'poster',
       'banner', 'banners',
@@ -88,21 +97,32 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
     keywords: [
       'upcoming event', 'upcoming events', 'upcoming',
       'newsletter feature mention', 'newsletter feature', 'newsletter mention',
+      'feature mention',
       'newsletter upcoming event', 'newsletter upcoming',
       'newsletter graphic', 'newsletter graphics', 'newsletter',
+      'monthly newsletter',
+      'family ministry newsletter',
       'bulletin', 'email blast', 'eblast',
-      'men email', 'women email',
+      'men email', 'women email', 'email - men', 'email - women', 'ministry email',
       'yellow', 'banana', 'gold', 'amber', 'caution', 'warning'
     ],
     colorId: '5'
   },
-  // 7: Peacock / Light Blue / Cyan (e.g. Promo Slides, Digital Displays, App)
+  // 7: Peacock / Light Blue / Cyan (e.g. Promo Slides, Digital Displays, App, Linktree, Graphic Identity)
   {
     keywords: [
       'promo slide', 'promo slides', 'promo', 'promotion', 'promotional',
-      'invite/promo cards', 'promo cards',
+      'graphic identity', 'identity',
       'app home feature', 'app feature', 'app', 'mobile app',
-      'lobby tvs', 'lobby tv', 'tv', 'tvs', 'screens', 'screen',
+      'linktree insta', 'linktree services', 'linktree', 'insta',
+      'social media graphic',
+      'neighborhood groups/influencers', 'neighborhood groups', 'influencers',
+      'message notes slides', 'message notes slide', 'message notes',
+      'promo video/reel', 'promo video', 'reel',
+      'digital invite',
+      'lobby tvs (4panels video)', 'lobby tvs (1 panel)', 'lobby tvs', 'lobby tv', 'tv', 'tvs', 'screens', 'screen',
+      'google biz profile', 'google biz', 'biz profile',
+      'invite/promo cards', 'promo cards',
       'digital', 'slide', 'slides',
       'peacock', 'cyan', 'light blue', 'sky blue', 'azure', 'aqua', 'teal'
     ],
@@ -113,6 +133,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
     keywords: [
       'events page', 'event page', 'events pages',
       'landing page', 'landing pages',
+      'home page',
       'website', 'web page', 'webpages', 'web', 'site',
       'events graphic', 'event graphic',
       'ministry page', 'outreach page', 'page', 'pages',
@@ -123,8 +144,9 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
   // 6: Tangerine / Orange / Peach (e.g. Announcements, Stage Mentions)
   {
     keywords: [
-      'announcement slide', 'announcements slide', 'announcement slides',
+      'live announcements - kids', 'live announcements - students',
       'live announcements', 'live announcement',
+      'announcement slide', 'announcements slide', 'announcement slides',
       'stage announcements', 'stage announcement',
       'announcements', 'announcement', 'stage mention', 'pulpit',
       'tangerine', 'orange', 'peach', 'apricot', 'bronze'
@@ -138,10 +160,11 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
     ],
     colorId: '8'
   },
-  // 9: Blueberry / Dark Blue / Navy
+  // 9: Blueberry / Dark Blue / Navy (specific service keywords only; never bare 'services' which hijacks Linktree Services)
   {
     keywords: [
-      'internal', 'meeting', 'service', 'services', 'volunteer', 'serve', 'staff',
+      'sunday service', 'worship service', 'church service',
+      'internal', 'meeting', 'volunteer', 'serve', 'staff',
       'blueberry', 'blue', 'dark blue', 'navy', 'cobalt', 'indigo'
     ],
     colorId: '9'
@@ -173,7 +196,7 @@ const KEYWORD_MAP: Array<{ keywords: string[]; colorId: string }> = [
   // 1: Lavender / Light Purple
   {
     keywords: [
-      'worship', 'music', 'choir', 'creative', 'art', 'production',
+      'music', 'choir', 'creative', 'art', 'production',
       'lavender', 'lilac', 'light purple', 'periwinkle'
     ],
     colorId: '1'
@@ -323,10 +346,28 @@ export function parseColorToGoogleColorId(value?: string | null, format?: string
 
     // 3. Keyword / Category Name / Color Name
     const lower = trimmed.toLowerCase();
+    const cleanedLower = lower.replace(/^.*?\s*-\s*/, '').trim();
+
+    // Pass 1: Exact matches against full text or cleaned text
     for (const entry of KEYWORD_MAP) {
-      if (entry.keywords.some((kw) => lower === kw || lower.includes(kw))) {
+      if (entry.keywords.some((kw) => lower === kw || (cleanedLower && cleanedLower === kw))) {
         return entry.colorId;
       }
+    }
+
+    // Pass 2: Substring matches, preferring longer (more specific) keywords
+    let bestMatch: { colorId: string; kwLength: number } | null = null;
+    for (const entry of KEYWORD_MAP) {
+      for (const kw of entry.keywords) {
+        if (matchesKeyword(lower, kw) || (cleanedLower && matchesKeyword(cleanedLower, kw))) {
+          if (!bestMatch || kw.length > bestMatch.kwLength) {
+            bestMatch = { colorId: entry.colorId, kwLength: kw.length };
+          }
+        }
+      }
+    }
+    if (bestMatch) {
+      return bestMatch.colorId;
     }
   }
 

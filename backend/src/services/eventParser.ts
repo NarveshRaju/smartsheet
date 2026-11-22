@@ -413,6 +413,15 @@ export function resolveRowColorId(
   if (cellVal) {
     const kwColor = parseColorToGoogleColorId(cellVal, undefined);
     if (kwColor) return kwColor;
+
+    // Fallback: If mapped color cell has a value, check if the row has a "Category" cell to inherit the category color
+    for (const cell of Object.values(row.cells || {}) as any[]) {
+      const title = cell?.columnTitle?.toLowerCase()?.trim();
+      if (title === 'category' && cell?.value) {
+        const catColor = parseColorToGoogleColorId(String(cell.value), undefined);
+        if (catColor) return catColor;
+      }
+    }
   }
 
   // Explicit color column was mapped, but this row has no color:

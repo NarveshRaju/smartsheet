@@ -127,7 +127,18 @@ test('colorMapper resolves color codes, names, subcategory text, and Smartsheet 
   assert.equal(parseColorToGoogleColorId('Restroom Posters'), '2');
   assert.equal(parseColorToGoogleColorId('Marque Sign'), '2');
   assert.equal(parseColorToGoogleColorId('Decals/Stickers'), '10');
+  assert.equal(parseColorToGoogleColorId('Graphic Identity'), '7');
+  assert.equal(parseColorToGoogleColorId('Feature Mention'), '5');
+  assert.equal(parseColorToGoogleColorId('Linktree Insta'), '7');
+  assert.equal(parseColorToGoogleColorId('Linktree Services'), '7');
+  assert.equal(parseColorToGoogleColorId('App Home Feature'), '7');
+  assert.equal(parseColorToGoogleColorId('Google Biz Profile'), '7');
+  assert.equal(parseColorToGoogleColorId('Family Ministry Newsletter'), '5');
   assert.equal(parseColorToGoogleColorId('Social Media'), undefined, 'Uncolored subcategory returns undefined');
+  assert.equal(parseColorToGoogleColorId('Social Media Graphic'), '7');
+  assert.equal(parseColorToGoogleColorId('A-Long - Graphic Identity'), '7');
+  assert.equal(parseColorToGoogleColorId('A-Long - Newsletter Feature Mention'), '5');
+  assert.equal(parseColorToGoogleColorId('Unassigned Task'), undefined, 'Uncolored subcategory returns undefined');
   assert.equal(parseColorToGoogleColorId('Newsletter Feature Mention'), '5');
 
   // Smartsheet cell format string (descriptor 9 is bg_color mapped via official palette)
