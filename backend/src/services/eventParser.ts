@@ -1,5 +1,6 @@
 import { curateEventWithGroq, validateAiEvent } from './groq.service.js';
 import { logger } from '../utils/logger.js';
+import { parseColorToGoogleColorId } from '../utils/colorMapper.js';
 import type { CalendarEventData, ColumnMapping } from '../types/index.js';
 
 
@@ -335,6 +336,15 @@ function mapRowToEventStandard(
     }
   }
 
+  const colorCell = columnMapping.color ? row.cells?.[columnMapping.color] : undefined;
+  if (colorCell) {
+    const colorVal = colorCell.value?.toString() || colorCell.displayValue;
+    const colorId = parseColorToGoogleColorId(colorVal, colorCell.format);
+    if (colorId) {
+      event.colorId = colorId;
+    }
+  }
+
   return sanitizeCalendarEventRange(event, timezone);
 }
 
@@ -356,16 +366,30 @@ export async function mapRowToEvent(
   const simpleTime = (v: string) => isAllDayIndicator(v) || /^(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(v) || /^(?:0?[1-9]|1[0-2])(?::[0-5]\d)?\s*(?:am|pm)$/i.test(v);
   const endDate = value(columnMapping.endDate);
   const endTime = value(columnMapping.endTime);
+
+  let event: CalendarEventData | null = null;
   if (!time && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?$/.test(start) && !endTime) {
     const normalize = (v: string) => v.replace(/(T\d{2}:\d{2})(?=Z|[+-]|$)/, '$1:00');
     const startTime = normalize(start);
     const end = endDate ? normalize(endDate) : new Date(Date.parse(/Z$|[+-]\d{2}:\d{2}$/.test(startTime) ? startTime : startTime + 'Z') + 3600000).toISOString().replace('.000Z', /Z$|[+-]\d{2}:\d{2}$/.test(startTime) ? 'Z' : '');
-    return validateAiEvent({ ...mapRowToEventStandard(row, columnMapping, timezone), summary: title, start: { dateTime: startTime }, end: { dateTime: end } }, timezone);
+    event = validateAiEvent({ ...mapRowToEventStandard(row, columnMapping, timezone), summary: title, start: { dateTime: startTime }, end: { dateTime: end } }, timezone);
+  } else if (isoDate(start) && simpleTime(time) && (!endDate || isoDate(endDate)) && (!endTime || simpleTime(endTime))) {
+    event = mapRowToEventStandard(row, columnMapping, timezone);
+  } else {
+    event = await curateEventWithGroq(row, columnMapping, timezone);
   }
-  if (isoDate(start) && simpleTime(time) && (!endDate || isoDate(endDate)) && (!endTime || simpleTime(endTime))) {
-    const parsed = mapRowToEventStandard(row, columnMapping, timezone);
-    if (parsed) return parsed;
+
+  if (event && columnMapping.color) {
+    const colorCell = row.cells?.[columnMapping.color];
+    if (colorCell) {
+      const colorVal = colorCell.value?.toString() || colorCell.displayValue;
+      const colorId = parseColorToGoogleColorId(colorVal, colorCell.format);
+      if (colorId) {
+        event.colorId = colorId;
+      }
+    }
   }
-  return curateEventWithGroq(row, columnMapping, timezone);
+
+  return event;
 }
 

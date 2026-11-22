@@ -94,3 +94,103 @@ test('getAllConfigsWithStats aggregates stats across multiple configurations', a
   assert.equal(result[1].name, 'Engineering Sprints');
   assert.equal(result[1].stats?.synced, 30);
 });
+
+
+import { parseColorToGoogleColorId, matchHexToGoogleColor, mapSmartsheetFormatToColor } from '../src/utils/colorMapper.js';
+import { mapRowToEvent } from '../src/services/eventParser.js';
+import { sameEvent } from '../src/utils/eventIdentity.js';
+import { buildCalendarPatch } from '../src/utils/calendarPatch.js';
+
+test('colorMapper resolves color codes, names, subcategory text, and Smartsheet cell formats', () => {
+  // Direct Google Calendar colorId
+  assert.equal(parseColorToGoogleColorId('5'), '5');
+  assert.equal(parseColorToGoogleColorId('11'), '11');
+
+  // Hex codes
+  assert.equal(matchHexToGoogleColor('#FFFF00'), '5'); // Yellow -> Banana (5)
+  assert.equal(matchHexToGoogleColor('#FF0000'), '11'); // Red -> Tomato (11)
+  assert.equal(matchHexToGoogleColor('#039BE5'), '7'); // Light Blue -> Peacock (7)
+  assert.equal(matchHexToGoogleColor('#33B679'), '2'); // Light Green -> Sage (2)
+
+  // Color names
+  assert.equal(parseColorToGoogleColorId('yellow'), '5');
+  assert.equal(parseColorToGoogleColorId('blue'), '9');
+  assert.equal(parseColorToGoogleColorId('pink'), '4');
+  assert.equal(parseColorToGoogleColorId('green'), '10');
+  assert.equal(parseColorToGoogleColorId('orange'), '6');
+
+  // Sub-Category values from user's Smartsheet
+  assert.equal(parseColorToGoogleColorId('Upcoming Event'), '5');
+  assert.equal(parseColorToGoogleColorId('Promo Slide'), '7');
+  assert.equal(parseColorToGoogleColorId('Events Page'), '4');
+  assert.equal(parseColorToGoogleColorId('Announcements'), '6');
+  assert.equal(parseColorToGoogleColorId('Restroom Posters'), '2');
+  assert.equal(parseColorToGoogleColorId('Social Media'), '8');
+  assert.equal(parseColorToGoogleColorId('Newsletter Feature Mention'), '5');
+
+  // Smartsheet cell format string (descriptor 9 is bg_color)
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,14,,,,,,'), '5'); // Yellow
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,18,,,,,,'), '7'); // Cyan/Light Blue
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,11,,,,,,'), '4'); // Pink
+  assert.equal(mapSmartsheetFormatToColor(',,,,,,,,,17,,,,,,'), '2'); // Light Green
+
+  // Optionality / blank handling
+  assert.equal(parseColorToGoogleColorId(undefined, undefined), undefined);
+  assert.equal(parseColorToGoogleColorId('', ''), undefined);
+  assert.equal(parseColorToGoogleColorId('   '), undefined);
+});
+
+test('mapRowToEvent assigns colorId when color column is mapped, and ignores when unmapped', async () => {
+  const rowWithColor = {
+    id: 'row-1',
+    cells: {
+      title: { value: 'Annual Gala' },
+      date: { value: '2026-10-15' },
+      time: { value: '18:00' },
+      subCategory: { value: 'Promo Slide' },
+    },
+  };
+
+  const mappingWithColor = {
+    title: 'title',
+    startDate: 'date',
+    startTime: 'time',
+    color: 'subCategory',
+  };
+
+  const parsedWithColor = await mapRowToEvent(rowWithColor, mappingWithColor, 'Asia/Kolkata');
+  assert.ok(parsedWithColor);
+  assert.equal(parsedWithColor.colorId, '7'); // Peacock
+
+  // Without color column mapped
+  const mappingWithoutColor = {
+    title: 'title',
+    startDate: 'date',
+    startTime: 'time',
+  };
+
+  const parsedWithoutColor = await mapRowToEvent(rowWithColor, mappingWithoutColor, 'Asia/Kolkata');
+  assert.ok(parsedWithoutColor);
+  assert.equal(parsedWithoutColor.colorId, undefined);
+});
+
+test('sameEvent and buildCalendarPatch respect colorId', () => {
+  const baseEvent: any = {
+    summary: 'Meeting',
+    start: { dateTime: '2026-10-15T09:00:00' },
+    end: { dateTime: '2026-10-15T10:00:00' },
+  };
+
+  // Same event when desired does not specify colorId (preserves calendar's color)
+  assert.equal(sameEvent({ ...baseEvent, colorId: '7' }, baseEvent, 'UTC'), true);
+
+  // Mismatch when desired specifies different colorId
+  assert.equal(sameEvent({ ...baseEvent, colorId: '7' }, { ...baseEvent, colorId: '5' }, 'UTC'), false);
+
+  // Match when desired specifies identical colorId
+  assert.equal(sameEvent({ ...baseEvent, colorId: '5' }, { ...baseEvent, colorId: '5' }, 'UTC'), true);
+
+  // buildCalendarPatch includes colorId when specified
+  const patch = buildCalendarPatch({ ...baseEvent, colorId: '5' });
+  assert.equal(patch.colorId, '5');
+});

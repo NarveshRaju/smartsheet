@@ -10,10 +10,14 @@ export function buildCalendarPatch(event: CalendarEventData): calendar_v3.Schema
       : { date: null, dateTime: value.dateTime, timeZone: value.timeZone };
   };
   if (Boolean(event.start.date) !== Boolean(event.end.date)) throw new Error('Calendar start and end must use the same date type');
-  return {
+  const patch: calendar_v3.Schema$Event = {
     ...event,
     start: boundary(event.start), end: boundary(event.end),
     description: event.description || '', location: event.location || '',
     attendees: event.attendees || [], status: event.status || 'confirmed',
   };
+  if (event.colorId !== undefined) {
+    patch.colorId = event.colorId || null;
+  }
+  return patch;
 }

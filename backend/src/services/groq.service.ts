@@ -16,6 +16,7 @@ const boundary = z.object({ date: date.optional(), dateTime: dateTime.optional()
 const eventSchema = z.object({
   summary: z.string().min(1), start: boundary, end: boundary,
   description: z.string().optional(), location: z.string().optional(),
+  colorId: z.string().optional(),
   attendees: z.array(z.object({ email: z.string().email() })).optional(),
   status: z.enum(['confirmed','tentative','cancelled']).optional(),
 }).refine(e => Boolean(e.start.date) === Boolean(e.end.date))

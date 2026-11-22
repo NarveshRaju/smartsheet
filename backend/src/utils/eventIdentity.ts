@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 type Boundary = { date?: string | null; dateTime?: string | null; timeZone?: string | null };
-type Event = { summary?: string | null; start?: Boundary | null; end?: Boundary | null; description?: string | null; location?: string | null; status?: string | null; attendees?: Array<{ email?: string | null }> | null };
+type Event = { summary?: string | null; start?: Boundary | null; end?: Boundary | null; description?: string | null; location?: string | null; status?: string | null; colorId?: string | null; attendees?: Array<{ email?: string | null }> | null };
 
 function wallClock(timestamp: number, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -44,7 +44,8 @@ export function sameEvent(a: Event, b: Event, timezone: string): boolean {
     e.description || '', e.location || '', e.status || 'confirmed',
     (e.attendees || []).map(x => x.email?.toLowerCase()).sort(),
   ]);
-  return eventFingerprint(a, timezone) === eventFingerprint(b, timezone) && extras(a) === extras(b);
+  const colorMatch = b.colorId === undefined || (a.colorId || '') === (b.colorId || '');
+  return eventFingerprint(a, timezone) === eventFingerprint(b, timezone) && extras(a) === extras(b) && colorMatch;
 }
 
 export function stableEventId(sheetId: string, rowId: string, generation = ''): string {
@@ -54,6 +55,6 @@ export function stableEventId(sheetId: string, rowId: string, generation = ''): 
 
 export function inputHash(row: any, mapping: unknown, timezone: string): string {
   const cells = Object.entries<any>(row.cells || {}).sort(([a], [b]) => a.localeCompare(b))
-    .map(([id, cell]) => [id, cell.value ?? null, cell.displayValue ?? null, cell.columnTitle ?? null]);
+    .map(([id, cell]) => [id, cell.value ?? null, cell.displayValue ?? null, cell.columnTitle ?? null, cell.format ?? null]);
   return createHash('sha256').update(JSON.stringify([cells, mapping, timezone, 'parser-v2'])).digest('hex');
 }

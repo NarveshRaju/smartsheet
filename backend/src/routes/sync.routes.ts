@@ -53,6 +53,7 @@ const syncConfigSchema = z.object({
     location: z.string().optional(),
     attendee: z.string().optional(),
     status: z.string().optional(),
+    color: z.string().optional(),
   }),
   isEnabled: z.boolean().optional(),
 });

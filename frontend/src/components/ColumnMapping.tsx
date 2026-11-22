@@ -14,6 +14,7 @@ const FIELDS = [
   { key: 'location', label: 'Location / Link', icon: '📍', required: false, desc: 'Event location or meeting link' },
   { key: 'attendee', label: 'Attendees (Emails)', icon: '👥', required: false, desc: 'Comma-separated guest emails' },
   { key: 'status', label: 'Status', icon: '🔖', required: false, desc: 'Status (Confirmed / Tentative / Cancelled)' },
+  { key: 'color', label: 'Event Color / Sub-Category', icon: '🎨', required: false, desc: 'Optional: assigns Google Calendar event color from cell color, code, or subcategory' },
 ] as const;
 
 export default function ColumnMapping({ sheetId, mapping, onChange, disabled }: Props) {

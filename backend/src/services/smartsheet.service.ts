@@ -5,7 +5,6 @@ import { withRetry } from '../utils/apiRetry.js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 
-
 const SMARTSHEET_API = 'https://api.smartsheet.com/2.0';
 
 async function getAccessToken(userId: string): Promise<string> {
@@ -87,7 +86,7 @@ export async function handleSmartsheetCallback(code: string) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
 
-  return response.data; // { access_token, refresh_token, expires_in, token_type }
+  return response.data;
 }
 
 export async function listSheets(userId: string) {
@@ -126,7 +125,7 @@ export async function getSheetRows(userId: string, sheetId: string) {
   return withRetry(async () => {
     const client = apiClient(token);
     const response = await client.get(`/sheets/${sheetId}`, {
-      params: { level: 2, include: 'objectValue' },
+      params: { level: 2, include: 'objectValue,format' },
     });
     const columns = response.data.columns || [];
     const rows = response.data.rows;
@@ -143,6 +142,7 @@ export async function getSheetRows(userId: string, sheetId: string) {
             value: cell.value,
             displayValue: cell.displayValue,
             columnTitle: col.title,
+            format: cell.format,
           };
         }
       }
@@ -160,9 +160,8 @@ export async function getRow(userId: string, sheetId: string, rowId: string) {
   const token = await getAccessToken(userId);
   return withRetry(async () => {
     const client = apiClient(token);
-    // Get full sheet to have column mapping
     const response = await client.get(`/sheets/${sheetId}`, {
-      params: { level: 2, include: 'objectValue', rowIds: rowId },
+      params: { level: 2, include: 'objectValue,format', rowIds: rowId },
     });
     const columns = response.data.columns || [];
     const row = response.data.rows?.[0];
@@ -176,6 +175,7 @@ export async function getRow(userId: string, sheetId: string, rowId: string) {
           value: cell.value,
           displayValue: cell.displayValue,
           columnTitle: col.title,
+          format: cell.format,
         };
       }
     }

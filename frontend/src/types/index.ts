@@ -42,6 +42,7 @@ export interface ColumnMapping {
   location?: string;
   attendee?: string;
   status?: string;
+  color?: string;
 }
 
 export interface SyncStats {

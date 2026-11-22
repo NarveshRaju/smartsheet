@@ -10,6 +10,7 @@ export interface ColumnMapping {
   location?: string;
   attendee?: string;
   status?: string;
+  color?: string;
 }
 
 export interface SyncConfigInput {
@@ -25,6 +26,7 @@ export interface CalendarEventData {
   summary: string;
   description?: string;
   location?: string;
+  colorId?: string;
   start: { dateTime?: string; date?: string; timeZone: string };
   end: { dateTime?: string; date?: string; timeZone: string };
   attendees?: Array<{ email: string }>;
